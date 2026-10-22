@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -24,7 +26,22 @@ class Account {
       Account(id: j['id'] as int, username: j['username'] as String, token: j['token'] as String);
 }
 
+/// برای لغو آپلود در حال انجام
+class UploadCancel {
+  bool cancelled = false;
+  HttpClient? _client;
+  void cancel() {
+    cancelled = true;
+    try {
+      _client?.close(force: true);
+    } catch (_) {}
+  }
+}
+
 class Api {
+  /// حداکثر حجم فایل: ۳۰ مگابایت (سرور هم همین‌قدر قبول میکنه)
+  static const int maxFileBytes = 30 * 1024 * 1024;
+
   static String baseUrl = 'http://127.0.0.1:3001';
   static void Function()? onUnauthorized;
   static String? notice;
@@ -301,6 +318,136 @@ class Api {
     try {
       await _req('POST', '/read/$peer');
     } catch (_) {}
+  }
+
+  // ---- files ----
+  /// آدرس مسیرهای عمومی (آواتار، کاور آهنگ)
+  static String assetUrl(String rel) => '$baseUrl$rel';
+
+  /// آدرس دانلود/استریم فایل پیام (با توکن؛ پلیر و عکس بدون هدر هم کار کنن)
+  static String fileUrl(Map f) => '$baseUrl${f['url']}?token=${Uri.encodeQueryComponent(token ?? '')}';
+
+  static Future<Directory> _filesDir() async {
+    Directory base;
+    try {
+      base = (await getExternalStorageDirectory()) ?? await getApplicationDocumentsDirectory();
+    } catch (_) {
+      base = await getApplicationDocumentsDirectory();
+    }
+    final d = Directory('${base.path}/chat_files');
+    if (!await d.exists()) await d.create(recursive: true);
+    return d;
+  }
+
+  static String _localName(Map msg) {
+    final n = ((msg['file'] as Map)['name'] as String).replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    return '${msg['id']}_$n';
+  }
+
+  /// مسیر فایل دانلودشده (اگه قبلاً دانلود شده باشه)
+  static Future<String?> localPath(Map msg) async {
+    try {
+      final d = await _filesDir();
+      final file = File('${d.path}/${_localName(msg)}');
+      final size = ((msg['file'] as Map)['size'] as num).toInt();
+      if (await file.exists() && await file.length() == size) return file.path;
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<String> downloadFile(Map msg, {void Function(double)? onProgress}) async {
+    final f = msg['file'] as Map;
+    final total = (f['size'] as num).toInt();
+    final d = await _filesDir();
+    final target = File('${d.path}/${_localName(msg)}');
+    final part = File('${target.path}.part');
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+    IOSink? sink;
+    try {
+      final rq = await client.getUrl(Uri.parse(fileUrl(f)));
+      final resp = await rq.close();
+      if (resp.statusCode == 404) throw ApiException('The file is no longer available');
+      if (resp.statusCode != 200) throw ApiException('Download failed (${resp.statusCode})');
+      sink = part.openWrite();
+      var got = 0;
+      await for (final chunk in resp.timeout(const Duration(seconds: 30))) {
+        sink.add(chunk);
+        got += chunk.length;
+        if (total > 0) onProgress?.call((got / total).clamp(0.0, 1.0));
+      }
+      await sink.flush();
+      await sink.close();
+      sink = null;
+      if (await target.exists()) await target.delete();
+      await part.rename(target.path);
+      return target.path;
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw ApiException('Download failed. Check your connection to $baseUrl.');
+    } finally {
+      try {
+        await sink?.close();
+      } catch (_) {}
+      client.close(force: true);
+    }
+  }
+
+  /// آپلود فایل (تا ۳۰ مگابایت) با درصد پیشرفت. بدنه‌ی درخواست خود فایله.
+  static Future<Map<String, dynamic>> sendFile(
+    int peer,
+    String path,
+    String name, {
+    String caption = '',
+    void Function(double)? onProgress,
+    UploadCancel? cancel,
+  }) async {
+    final file = File(path);
+    final len = await file.length();
+    if (len == 0) throw ApiException('The file is empty');
+    if (len > maxFileBytes) throw ApiException('File is too large (max 30 MB)');
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+    cancel?._client = client;
+    try {
+      final rq = await client.postUrl(Uri.parse('$baseUrl/messages/$peer/file'));
+      rq.headers.set('Authorization', 'Bearer $token');
+      rq.headers.set('Content-Type', 'application/octet-stream');
+      rq.headers.set('x-file-name', Uri.encodeComponent(name.length > 150 ? name.substring(name.length - 150) : name));
+      if (caption.isNotEmpty) rq.headers.set('x-caption', Uri.encodeComponent(caption));
+      rq.contentLength = len;
+      var sent = 0;
+      await for (final chunk in file.openRead()) {
+        rq.add(chunk);
+        await rq.flush();
+        sent += chunk.length;
+        onProgress?.call(sent / len);
+      }
+      final resp = await rq.close().timeout(const Duration(minutes: 3));
+      final text = await resp.transform(utf8.decoder).join();
+      dynamic data;
+      try {
+        data = text.isEmpty ? null : json.decode(text);
+      } catch (_) {
+        throw ApiException('Unexpected response from $baseUrl (status ${resp.statusCode}).');
+      }
+      if (resp.statusCode == 401) {
+        notice = 'Session expired, please sign in again';
+        await logout();
+        onUnauthorized?.call();
+        throw ApiException('Session expired, please sign in again');
+      }
+      if (resp.statusCode >= 400) {
+        throw ApiException(_tr(data is Map ? data['error'] : null) ?? 'Server error (${resp.statusCode})');
+      }
+      return _map(data);
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      if (cancel?.cancelled == true) throw ApiException('Upload cancelled');
+      throw ApiException('Upload failed. Check your connection to $baseUrl.');
+    } finally {
+      client.close(force: true);
+    }
   }
 
   // ---- WebSocket (realtime) ----

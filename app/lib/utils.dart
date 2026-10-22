@@ -175,3 +175,71 @@ class Avatar extends StatelessWidget {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// فایل و آهنگ
+// ---------------------------------------------------------------------------
+
+String fmtSize(num bytes) {
+  if (bytes < 1024) return '${bytes.toInt()} B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
+String fmtDur(Duration d) {
+  final h = d.inHours;
+  final m = d.inMinutes.remainder(60);
+  final s = d.inSeconds.remainder(60);
+  return h > 0 ? '$h:${_two(m)}:${_two(s)}' : '$m:${_two(s)}';
+}
+
+Map<String, dynamic>? fileOf(Map m) => m['file'] is Map ? Map<String, dynamic>.from(m['file'] as Map) : null;
+
+String fileKind(Map m) => (fileOf(m)?['kind'] as String?) ?? '';
+
+Map<String, dynamic> audioMeta(Map m) {
+  final f = fileOf(m);
+  final md = f?['meta'];
+  return md is Map ? Map<String, dynamic>.from(md) : <String, dynamic>{};
+}
+
+String audioTitle(Map m) {
+  final t = audioMeta(m)['title'];
+  if (t is String && t.trim().isNotEmpty) return t.trim();
+  final n = (fileOf(m)?['name'] as String?) ?? 'Audio';
+  final dot = n.lastIndexOf('.');
+  return dot > 0 ? n.substring(0, dot) : n;
+}
+
+String? audioArtist(Map m) {
+  final a = audioMeta(m)['artist'];
+  return (a is String && a.trim().isNotEmpty) ? a.trim() : null;
+}
+
+Duration? audioDuration(Map m) {
+  final d = audioMeta(m)['duration'];
+  return d is num && d > 0 ? Duration(milliseconds: d.toInt()) : null;
+}
+
+/// متن کوتاه یک پیام برای لیست گفتگوها / بنر پین
+String msgPreview(Map m) {
+  final text = ((m['text'] as String?) ?? '').trim();
+  final f = fileOf(m);
+  if (f == null) return text;
+  String label;
+  switch (f['kind']) {
+    case 'audio':
+      final a = audioArtist(m);
+      label = '🎵 ${a != null ? '$a - ' : ''}${audioTitle(m)}';
+      break;
+    case 'image':
+      label = '🖼 Photo';
+      break;
+    case 'video':
+      label = '🎬 Video';
+      break;
+    default:
+      label = '📎 ${f['name']}';
+  }
+  return text.isEmpty ? label : '$label  $text';
+}

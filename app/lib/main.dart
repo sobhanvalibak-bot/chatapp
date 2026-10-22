@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 
 import 'api.dart';
 import 'home_page.dart';
@@ -21,6 +22,14 @@ Future<void> main() async {
           ),
         ),
       );
+  // مدیا سشن: نوتیفیکیشن پخش، کنترل لاک‌اسکرین و دکمه‌های هدفون
+  try {
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.example.chat_app.audio',
+      androidNotificationChannelName: 'Music playback',
+      androidNotificationOngoing: true,
+    );
+  } catch (_) {}
   try {
     await Api.init();
     if (Api.loggedIn) Api.connectWs();

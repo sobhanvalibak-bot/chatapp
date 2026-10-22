@@ -1,12 +1,25 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'api.dart';
+import 'file_widgets.dart';
+import 'permissions_page.dart';
+import 'player.dart';
 import 'profile_page.dart';
 import 'utils.dart';
+
+/// فایلی که در حال آپلوده (قبل از اینکه سرور پیام رو بسازه)
+class _Pending {
+  final String name;
+  final int size;
+  double progress = 0;
+  final UploadCancel cancel = UploadCancel();
+  _Pending(this.name, this.size);
+}
 
 class ChatPage extends StatefulWidget {
   final int peerId;
@@ -27,6 +40,7 @@ class _ChatPageState extends State<ChatPage> {
   String? _error;
   late Map<String, dynamic> _peer;
   Map<String, dynamic>? _editing;
+  final List<_Pending> _pending = [];
   int _pinIdx = -1; // اندیس پیام پینی که الان تو بنر نشون داده میشه (-1 = آخری)
 
   @override
@@ -175,6 +189,112 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  // ---- ارسال فایل (تا ۳۰ مگابایت) ----
+  List<Map<String, dynamic>> get _audioQueue => _msgs.where((m) => fileKind(m) == 'audio').toList();
+
+  Future<void> _attach() async {
+    // اولین بار در هر اجرا، اگه مجوزی داده نشده، صفحه‌ی مجوزها رو نشون بده
+    if (!Perm.askedThisSession) {
+      Perm.askedThisSession = true;
+      if (!await Perm.allGranted()) {
+        if (!mounted) return;
+        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PermissionsPage()));
+      }
+    }
+    if (!mounted) return;
+    showCupertinoModalPopup(
+      context: context,
+      builder: (ctx) => CupertinoActionSheet(
+        title: const Text('Send a file (max 30 MB)'),
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _pick(FileType.media);
+            },
+            child: const Text('Photo or video'),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _pick(FileType.audio);
+            },
+            child: const Text('Music'),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _pick(FileType.any);
+            },
+            child: const Text('File'),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pick(FileType type) async {
+    FilePickerResult? r;
+    try {
+      r = await FilePicker.platform.pickFiles(type: type, allowMultiple: false, withData: false);
+    } catch (_) {
+      _snack('Could not open the file picker');
+      return;
+    }
+    if (r == null || r.files.isEmpty) return;
+    final f = r.files.single;
+    final path = f.path;
+    if (path == null) {
+      _snack('Could not read the file');
+      return;
+    }
+    if (f.size > Api.maxFileBytes) {
+      _snack('File is too large (max 30 MB)');
+      return;
+    }
+    if (f.size == 0) {
+      _snack('The file is empty');
+      return;
+    }
+    // متنی که تو کادر نوشته شده میشه کپشن فایل
+    var caption = '';
+    if (_editing == null) {
+      caption = _ctrl.text.trim();
+      if (caption.isNotEmpty) _ctrl.clear();
+    }
+    await _upload(f.name, path, f.size, caption);
+  }
+
+  Future<void> _upload(String name, String path, int size, String caption) async {
+    final p = _Pending(name, size);
+    setState(() => _pending.add(p));
+    try {
+      final m = await Api.sendFile(
+        widget.peerId,
+        path,
+        name,
+        caption: caption,
+        cancel: p.cancel,
+        onProgress: (v) {
+          if (mounted && ((v - p.progress) >= 0.01 || v >= 1)) setState(() => p.progress = v);
+        },
+      );
+      _add(m);
+    } on ApiException catch (e) {
+      if (!p.cancel.cancelled) _snack(e.message);
+      if (caption.isNotEmpty && _ctrl.text.isEmpty && mounted) _ctrl.text = caption;
+    } finally {
+      if (mounted) setState(() => _pending.remove(p));
+      try {
+        await FilePicker.platform.clearTemporaryFiles();
+      } catch (_) {}
+    }
+  }
+
   void _startEdit(Map<String, dynamic> m) {
     setState(() => _editing = m);
     _ctrl.text = m['text'] as String;
@@ -243,13 +363,14 @@ class _ChatPageState extends State<ChatPage> {
       context: context,
       builder: (ctx) => CupertinoActionSheet(
         actions: [
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              Clipboard.setData(ClipboardData(text: m['text'] as String));
-            },
-            child: const Text('Copy'),
-          ),
+          if (((m['text'] as String?) ?? '').isNotEmpty)
+            CupertinoActionSheetAction(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Clipboard.setData(ClipboardData(text: m['text'] as String));
+              },
+              child: const Text('Copy'),
+            ),
           CupertinoActionSheetAction(
             onPressed: () {
               Navigator.pop(ctx);
@@ -257,7 +378,7 @@ class _ChatPageState extends State<ChatPage> {
             },
             child: Text(m['pinned'] == true ? 'Unpin' : 'Pin'),
           ),
-          if (_mineMsg(m))
+          if (_mineMsg(m) && m['file'] == null)
             CupertinoActionSheetAction(
               onPressed: () {
                 Navigator.pop(ctx);
@@ -317,7 +438,7 @@ class _ChatPageState extends State<ChatPage> {
     var i = _pinIdx;
     if (i < 0 || i >= list.length) i = list.length - 1;
     final m = list[i];
-    final text = (m['text'] as String).replaceAll('\n', ' ');
+    final text = msgPreview(m).replaceAll('\n', ' ');
     return Material(
       color: context.barBg,
       child: InkWell(
@@ -357,7 +478,8 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _bubble(Map<String, dynamic> m) {
     final mine = _mineMsg(m);
-    final text = m['text'] as String;
+    final text = (m['text'] as String?) ?? '';
+    final hasFile = m['file'] != null;
     final read = m['read'] == true;
     const r = Radius.circular(18);
     const tail = Radius.circular(4);
@@ -385,10 +507,17 @@ class _ChatPageState extends State<ChatPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Align(
-                alignment: dirOf(text) == TextDirection.rtl ? Alignment.centerRight : Alignment.centerLeft,
-                child: Text(text, textDirection: dirOf(text), style: const TextStyle(fontSize: 16, height: 1.3)),
-              ),
+              if (hasFile)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FileContent(msg: m, mine: mine, audioQueue: _audioQueue),
+                ),
+              if (hasFile && text.isNotEmpty) const SizedBox(height: 6),
+              if (text.isNotEmpty)
+                Align(
+                  alignment: dirOf(text) == TextDirection.rtl ? Alignment.centerRight : Alignment.centerLeft,
+                  child: Text(text, textDirection: dirOf(text), style: const TextStyle(fontSize: 16, height: 1.3)),
+                ),
               const SizedBox(height: 2),
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -416,6 +545,72 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  Widget _pendingBubble(_Pending p) {
+    final pct = (p.progress * 100).round();
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Container(
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
+        margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 10),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: context.bubbleMine,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(18),
+            topRight: Radius.circular(18),
+            bottomLeft: Radius.circular(18),
+            bottomRight: Radius.circular(4),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onTap: p.cancel.cancel,
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(color: tgBlue, shape: BoxShape.circle),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    SizedBox(
+                      width: 38,
+                      height: 38,
+                      child: CircularProgressIndicator(
+                        value: p.progress <= 0 ? null : p.progress,
+                        strokeWidth: 2.5,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const Icon(Icons.close_rounded, color: Colors.white, size: 20),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(p.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textDirection: dirOf(p.name),
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text('Sending… $pct% • ${fmtSize(p.size)}',
+                      style: TextStyle(fontSize: 12.5, color: context.metaMine)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _list() {
     if (_loading) return const Center(child: CupertinoActivityIndicator(radius: 14));
     if (_error != null) {
@@ -426,7 +621,7 @@ class _ChatPageState extends State<ChatPage> {
         ),
       );
     }
-    if (_msgs.isEmpty) {
+    if (_msgs.isEmpty && _pending.isEmpty) {
       return Center(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -443,8 +638,11 @@ class _ChatPageState extends State<ChatPage> {
       controller: _sc,
       reverse: true,
       padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: _msgs.length,
-      itemBuilder: (_, i) => _bubble(_msgs[_msgs.length - 1 - i]),
+      itemCount: _msgs.length + _pending.length,
+      itemBuilder: (_, i) {
+        if (i < _pending.length) return _pendingBubble(_pending[_pending.length - 1 - i]);
+        return _bubble(_msgs[_msgs.length - 1 - (i - _pending.length)]);
+      },
     );
   }
 
@@ -488,6 +686,11 @@ class _ChatPageState extends State<ChatPage> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            IconButton(
+              icon: Icon(Icons.attach_file_rounded, color: context.subText),
+              onPressed: _attach,
+              tooltip: 'Attach',
+            ),
             Expanded(
               child: Container(
                 decoration: BoxDecoration(
@@ -583,6 +786,7 @@ class _ChatPageState extends State<ChatPage> {
       body: Column(
         children: [
           _pinBanner(),
+          const MiniPlayer(),
           Expanded(child: _list()),
           _editBar(),
           _inputBar(),

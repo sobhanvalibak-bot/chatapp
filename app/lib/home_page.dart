@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'api.dart';
 import 'chat_page.dart';
 import 'login_page.dart';
+import 'permissions_page.dart';
+import 'player.dart';
 import 'profile_page.dart';
 import 'utils.dart';
 
@@ -29,6 +31,10 @@ class _HomePageState extends State<HomePage> {
     _load();
     _loadMe();
     _sub = Api.events.listen(_onEvent);
+    // بار اول: صفحه‌ی مجوزها (اعلان‌ها، عکس، ویدیو، موسیقی) رو نشون بده
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) maybeAskPermissions(context);
+    });
   }
 
   @override
@@ -172,11 +178,19 @@ class _HomePageState extends State<HomePage> {
                 ? 'Appearance: Dark'
                 : (Api.themeMode.value == ThemeMode.light ? 'Appearance: Light' : 'Appearance: System')),
           ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PermissionsPage()));
+            },
+            child: const Text('Permissions'),
+          ),
           for (final a in Api.accounts)
             CupertinoActionSheetAction(
               onPressed: () async {
                 Navigator.pop(ctx);
                 if (a.id == Api.userId) return;
+                await AudioCtl.i.close();
                 await Api.switchTo(a);
                 if (!mounted) return;
                 Navigator.of(context).pushAndRemoveUntil(
@@ -223,6 +237,7 @@ class _HomePageState extends State<HomePage> {
             isDestructiveAction: true,
             onPressed: () async {
               Navigator.pop(ctx);
+              await AudioCtl.i.close();
               await Api.logout();
               if (!mounted) return;
               Navigator.of(context).pushAndRemoveUntil(
@@ -246,7 +261,7 @@ class _HomePageState extends State<HomePage> {
     final last = c['last'] as Map<String, dynamic>;
     final unread = c['unread'] as int;
     final mine = last['from'] == Api.userId;
-    final text = (last['text'] as String).replaceAll('\n', ' ');
+    final text = msgPreview(last).replaceAll('\n', ' ');
     return InkWell(
       onTap: () => _open(peer['id'] as int, peer['username'] as String),
       child: Padding(
@@ -400,6 +415,7 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Column(
         children: [
+          const MiniPlayer(),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
             child: CupertinoSearchTextField(
