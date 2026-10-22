@@ -34,15 +34,28 @@ jobs:
           sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application android:usesCleartextTraffic="true"|' $M
           sed -i 's|android:label="[^"]*"|android:label="Chat"|' $M
           sed -i 's|</application>|    <meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="false"/>\n    </application>|' $M
-          cat $M
 
       - name: Build release APK
         working-directory: app
         run: |
           flutter pub get
-          flutter build apk --release
+          flutter build apk --release --build-number=${{ github.run_number }}
+
+      - name: Sign with fixed key
+        env:
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          OUT=app/build/app/outputs/flutter-apk
+          if [ -f release.p12 ] && [ -n "$KS_PASS" ]; then
+            APKSIGNER=$(ls $ANDROID_HOME/build-tools/*/apksigner | sort -V | tail -1)
+            "$APKSIGNER" sign --ks release.p12 --ks-pass env:KS_PASS --key-pass env:KS_PASS --ks-key-alias chat --out $OUT/chat.apk $OUT/app-release.apk
+            "$APKSIGNER" verify --print-certs $OUT/chat.apk
+          else
+            echo "WARNING: release.p12 or KEYSTORE_PASSWORD missing - using a temporary key (this APK will NOT update over older installs)"
+            cp $OUT/app-release.apk $OUT/chat.apk
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
           name: chat-apk
-          path: app/build/app/outputs/flutter-apk/app-release.apk
+          path: app/build/app/outputs/flutter-apk/chat.apk
