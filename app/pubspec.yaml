@@ -31,7 +31,8 @@ dependencies:
   # پلیر ویدیو داخل خود اپ
   video_player: ^2.9.2
   # ضبط ویس (صدا) و ویدیو مسیج دایره‌ای
-  record: ^5.1.2
+  # 6.x لازمه: record_linux 0.7.x (از record 5) با record_platform_interface 1.6 کامپایل نمیشه
+  record: ^6.0.0
   camera: ^0.11.0
   # باز کردن Termux از صفحه‌ی Offline
   android_intent_plus: ^5.2.0
