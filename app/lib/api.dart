@@ -18,6 +18,7 @@ class Api {
   static String? username;
   static int? userId;
   static void Function()? onUnauthorized;
+  static String? notice;
 
   static final _msgCtrl = StreamController<Map<String, dynamic>>.broadcast();
   static Stream<Map<String, dynamic>> get messages => _msgCtrl.stream;
@@ -95,6 +96,7 @@ class Api {
           'Unexpected response from $baseUrl (status ${r.statusCode}). Check the server address and port.');
     }
     if (r.statusCode == 401 && token != null) {
+      notice = 'Session expired, please sign in again';
       await logout();
       onUnauthorized?.call();
       throw ApiException('Session expired, please sign in again');
@@ -107,14 +109,23 @@ class Api {
 
   static Future<void> auth(String path, String u, String p) async {
     final d = await _req('POST', path, body: {'username': u, 'password': p});
-    token = d['token'];
-    username = d['user']['username'];
-    userId = d['user']['id'];
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('token', token!);
-    await prefs.setString('username', username!);
-    await prefs.setInt('userId', userId!);
-    connectWs();
+    try {
+      token = d['token'] as String;
+      username = d['user']['username'] as String;
+      userId = d['user']['id'] as int;
+    } catch (_) {
+      token = null;
+      throw ApiException('Unexpected response from $baseUrl. Is this the chat server?');
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('token', token!);
+      await prefs.setString('username', username!);
+      await prefs.setInt('userId', userId!);
+    } catch (_) {}
+    try {
+      connectWs();
+    } catch (_) {}
   }
 
   static Future<void> logout() async {

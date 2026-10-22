@@ -56,6 +56,13 @@ class _LoginPageState extends State<LoginPage> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _error = Api.notice;
+    Api.notice = null;
+  }
+
+  @override
   void dispose() {
     _u.dispose();
     _p.dispose();
@@ -91,6 +98,8 @@ class _LoginPageState extends State<LoginPage> {
         setState(() => _error = e.message);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
       }
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Unexpected error: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }

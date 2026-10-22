@@ -50,6 +50,12 @@ class _HomePageState extends State<HomePage> {
         _loading = false;
         _error = e.message;
       });
+    } catch (e) {
+      if (!mounted || silent) return;
+      setState(() {
+        _loading = false;
+        _error = 'Unexpected error: $e';
+      });
     }
   }
 
