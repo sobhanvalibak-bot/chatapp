@@ -824,7 +824,7 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
                 ),
                 child: _busy
                     ? const CupertinoActivityIndicator()
-                    : const Column(
+                    : Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(Icons.add_photo_alternate_rounded, color: tgBlue, size: 30),

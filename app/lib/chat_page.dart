@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'api.dart';
+import 'attheme.dart';
 import 'attach_sheet.dart';
 import 'msg_menu.dart';
 import 'file_widgets.dart';
@@ -455,7 +456,7 @@ class _ChatPageState extends State<ChatPage> {
                   children: [
                     Text(
                       list.length > 1 ? 'Pinned message #${i + 1}' : 'Pinned message',
-                      style: const TextStyle(color: tgBlue, fontSize: 13, fontWeight: FontWeight.w600),
+                      style: TextStyle(color: tgBlue, fontSize: 13, fontWeight: FontWeight.w600),
                     ),
                     Text(text,
                         maxLines: 1,
@@ -465,7 +466,7 @@ class _ChatPageState extends State<ChatPage> {
                   ],
                 ),
               ),
-              const Icon(Icons.push_pin, size: 18, color: tgBlue),
+              Icon(Icons.push_pin, size: 18, color: tgBlue),
             ],
           ),
         ),
@@ -526,7 +527,7 @@ class _ChatPageState extends State<ChatPage> {
           if (text.isNotEmpty)
             Align(
               alignment: dirOf(text) == TextDirection.rtl ? Alignment.centerRight : Alignment.centerLeft,
-              child: Text(text, textDirection: dirOf(text), style: const TextStyle(fontSize: 16, height: 1.3)),
+              child: Text(text, textDirection: dirOf(text), style: TextStyle(fontSize: 16, height: 1.3, color: mine ? context.msgTextOut : context.msgTextIn)),
             ),
           _reactionChips(m),
           const SizedBox(height: 2),
@@ -697,7 +698,7 @@ class _ChatPageState extends State<ChatPage> {
               child: Container(
                 width: 44,
                 height: 44,
-                decoration: const BoxDecoration(color: tgBlue, shape: BoxShape.circle),
+                decoration: BoxDecoration(color: tgBlue, shape: BoxShape.circle),
                 child: Stack(
                   alignment: Alignment.center,
                   children: [
@@ -786,13 +787,13 @@ class _ChatPageState extends State<ChatPage> {
       padding: const EdgeInsets.fromLTRB(14, 8, 6, 0),
       child: Row(
         children: [
-          const Icon(Icons.edit, size: 18, color: tgBlue),
+          Icon(Icons.edit, size: 18, color: tgBlue),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Edit message',
+                Text('Edit message',
                     style: TextStyle(color: tgBlue, fontSize: 13, fontWeight: FontWeight.w600)),
                 Text(text,
                     maxLines: 1,
@@ -818,7 +819,7 @@ class _ChatPageState extends State<ChatPage> {
       padding: const EdgeInsets.fromLTRB(14, 8, 6, 0),
       child: Row(
         children: [
-          const Icon(CupertinoIcons.reply, size: 20, color: tgBlue),
+          Icon(CupertinoIcons.reply, size: 20, color: tgBlue),
           const SizedBox(width: 10),
           Container(width: 3, height: 34, decoration: BoxDecoration(color: tgBlue, borderRadius: BorderRadius.circular(2))),
           const SizedBox(width: 8),
@@ -827,7 +828,7 @@ class _ChatPageState extends State<ChatPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Reply to $name',
-                    style: const TextStyle(color: tgBlue, fontSize: 13, fontWeight: FontWeight.w600)),
+                    style: TextStyle(color: tgBlue, fontSize: 13, fontWeight: FontWeight.w600)),
                 Text(text,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -977,7 +978,7 @@ class _ChatPageState extends State<ChatPage> {
         ),
       ),
       body: Container(
-        decoration: BoxDecoration(
+        decoration: AtTheme.chatDecoration(context.chatBg) ?? BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,

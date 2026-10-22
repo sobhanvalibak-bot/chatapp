@@ -601,7 +601,7 @@ class _FullPlayerState extends State<_FullPlayer> {
                             c.resume();
                           }
                         },
-                        child: const SizedBox(
+                        child: SizedBox(
                           width: 64,
                           height: 64,
                           child: Center(child: PlayPauseIcon(size: 56, color: tgBlue)),

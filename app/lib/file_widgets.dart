@@ -1,9 +1,11 @@
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 
 import 'api.dart';
+import 'attheme.dart';
 import 'media_viewer.dart';
 import 'player.dart';
 import 'utils.dart';
@@ -20,6 +22,7 @@ IconData _iconFor(Map<String, dynamic> f) {
   if (RegExp(r'\.(xls|xlsx|csv|ods)$').hasMatch(name)) return Icons.table_chart_rounded;
   if (RegExp(r'\.(ppt|pptx|odp)$').hasMatch(name)) return Icons.slideshow_rounded;
   if (name.endsWith('.apk')) return Icons.android_rounded;
+  if (name.endsWith('.attheme')) return Icons.palette_rounded;
   return Icons.insert_drive_file_rounded;
 }
 
@@ -65,6 +68,26 @@ class _FileContentState extends State<FileContent> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
   }
 
+  /// فایل تم تلگرام: بعد از تأیید کاربر اعمال میشه
+  Future<void> _applyThemeFile(String path, String fileName) async {
+    final title = fileName.replaceAll(RegExp(r'\.attheme$', caseSensitive: false), '');
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Apply theme?'),
+        content: Text(title),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Apply')),
+        ],
+      ),
+    );
+    if (yes != true) return;
+    final bytes = await File(path).readAsBytes();
+    final ok = await AtTheme.applyBytes(bytes, fileName);
+    _snack(ok ? 'Theme applied' : 'This is not a valid .attheme file');
+  }
+
   /// دانلود (اگه لازم بود) و بعد باز کردن با برنامه‌ی مناسب
   Future<void> _downloadAndOpen() async {
     if (_progress != null) return;
@@ -81,6 +104,11 @@ class _FileContentState extends State<FileContent> {
           _progress = null;
           _downloaded = true;
         });
+      }
+      final fname = ((_f['name'] as String?) ?? '').toLowerCase();
+      if (fname.endsWith('.attheme')) {
+        await _applyThemeFile(path, (_f['name'] as String?) ?? 'theme.attheme');
+        return;
       }
       final r = await OpenFilex.open(path);
       if (r.type != ResultType.done && r.type != ResultType.noAppToOpen) {
@@ -131,7 +159,7 @@ class _FileContentState extends State<FileContent> {
                   if (hasCover) CoverArt(msg: m, size: 50, radius: 25) else Container(
                     width: 50,
                     height: 50,
-                    decoration: const BoxDecoration(color: tgBlue, shape: BoxShape.circle),
+                    decoration: BoxDecoration(color: tgBlue, shape: BoxShape.circle),
                   ),
                   AnimatedBuilder(
                     animation: Listenable.merge([c.current, c.playing, c.buffering]),
@@ -278,7 +306,7 @@ class _FileContentState extends State<FileContent> {
             Container(
               width: 46,
               height: 46,
-              decoration: const BoxDecoration(color: tgBlue, shape: BoxShape.circle),
+              decoration: BoxDecoration(color: tgBlue, shape: BoxShape.circle),
               child: Stack(
                 alignment: Alignment.center,
                 children: [

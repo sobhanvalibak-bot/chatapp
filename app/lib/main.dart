@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 
 import 'api.dart';
+import 'attheme.dart';
 import 'main_shell.dart';
 import 'login_page.dart';
 import 'utils.dart';
@@ -32,6 +33,7 @@ Future<void> main() async {
   } catch (_) {}
   try {
     await Api.init();
+    await AtTheme.load();
     if (Api.loggedIn) Api.connectWs();
   } catch (_) {}
   Api.onUnauthorized = () {
@@ -45,13 +47,20 @@ Future<void> main() async {
 
 ThemeData _theme(Brightness b) {
   final dark = b == Brightness.dark;
-  final bg = dark ? const Color(0xFF0E1621) : Colors.white;
-  final bar = dark ? const Color(0xFF17212B) : Colors.white;
-  final fg = dark ? Colors.white : Colors.black;
-  return ThemeData(
+  final custom = AtTheme.current.value != null;
+  final bg = AtTheme.pick(const ['windowBackgroundWhite']) ?? (dark ? const Color(0xFF0E1621) : Colors.white);
+  final bar = AtTheme.pick(const ['actionBarDefault', 'windowBackgroundWhite']) ??
+      (dark ? const Color(0xFF17212B) : Colors.white);
+  final fg = AtTheme.pick(const ['actionBarDefaultTitle']) ?? (dark ? Colors.white : Colors.black);
+  final body = AtTheme.pick(const ['windowBackgroundWhiteBlackText']) ?? (dark ? Colors.white : Colors.black);
+  final div = AtTheme.pick(const ['divider']) ?? (dark ? const Color(0xFF223040) : const Color(0xFFE3E5E8));
+  final accent = tgBlue;
+  var scheme = ColorScheme.fromSeed(seedColor: accent, primary: accent, brightness: b);
+  if (custom) scheme = scheme.copyWith(surface: bg, onSurface: body);
+  final base = ThemeData(
     useMaterial3: true,
     brightness: b,
-    colorScheme: ColorScheme.fromSeed(seedColor: tgBlue, primary: tgBlue, brightness: b),
+    colorScheme: scheme,
     scaffoldBackgroundColor: bg,
     appBarTheme: AppBarTheme(
       backgroundColor: bar,
@@ -62,13 +71,13 @@ ThemeData _theme(Brightness b) {
       centerTitle: true,
       titleTextStyle: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: fg),
     ),
-    dividerTheme: DividerThemeData(
-      color: dark ? const Color(0xFF223040) : const Color(0xFFE3E5E8),
-    ),
+    dividerTheme: DividerThemeData(color: div),
     pageTransitionsTheme: const PageTransitionsTheme(builders: {
       TargetPlatform.android: CupertinoPageTransitionsBuilder(),
     }),
   );
+  if (!custom) return base;
+  return base.copyWith(textTheme: base.textTheme.apply(bodyColor: body, displayColor: body));
 }
 
 class MyApp extends StatefulWidget {
@@ -103,18 +112,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: Api.themeMode,
-      builder: (_, mode, __) => MaterialApp(
-        navigatorKey: navKey,
-        debugShowCheckedModeBanner: false,
-        title: 'Chat',
-        scrollBehavior: const CupertinoScrollBehavior(),
-        theme: _theme(Brightness.light),
-        darkTheme: _theme(Brightness.dark),
-        themeMode: mode,
-        home: Api.loggedIn ? const MainShell() : const LoginPage(),
-      ),
+    return AnimatedBuilder(
+      animation: Listenable.merge([Api.themeMode, AtTheme.current]),
+      builder: (_, __) {
+        final at = AtTheme.current.value;
+        // تم .attheme روشن/تاریک بودنش رو خودش مشخص می‌کنه
+        final mode = at != null ? (at.dark ? ThemeMode.dark : ThemeMode.light) : Api.themeMode.value;
+        return MaterialApp(
+          navigatorKey: navKey,
+          debugShowCheckedModeBanner: false,
+          title: 'Chat',
+          scrollBehavior: const CupertinoScrollBehavior(),
+          theme: _theme(Brightness.light),
+          darkTheme: _theme(Brightness.dark),
+          themeMode: mode,
+          home: Api.loggedIn ? const MainShell() : const LoginPage(),
+        );
+      },
     );
   }
 }

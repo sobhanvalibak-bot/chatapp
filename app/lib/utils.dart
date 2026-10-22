@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'attheme.dart';
 
-const tgBlue = Color(0xFF3390EC);
+const _tgBlueDefault = Color(0xFF3390EC);
+
+/// رنگ اصلی اپ؛ اگه تم .attheme فعال باشه از اون گرفته میشه
+Color get tgBlue => AtTheme.accent ?? _tgBlueDefault;
 
 const _avatarColors = [
   Color(0xFFE17076),
@@ -19,17 +23,34 @@ Color avatarColor(int id) => _avatarColors[id % _avatarColors.length];
 /// رنگ‌های سازگار با حالت روشن/تاریک
 extension Pal on BuildContext {
   bool get dark => Theme.of(this).brightness == Brightness.dark;
-  Color get chatBg => dark ? const Color(0xFF0E1621) : const Color(0xFFE7EBF0);
-  Color get bubbleMine => dark ? const Color(0xFF2B5278) : const Color(0xFFEFFDDE);
-  Color get bubbleOther => dark ? const Color(0xFF182533) : Colors.white;
-  Color get fieldFill => dark ? const Color(0xFF242F3D) : const Color(0xFFF1F3F5);
-  Color get barBg => dark ? const Color(0xFF17212B) : Colors.white;
-  Color get subText => dark ? const Color(0xFF7F91A4) : Colors.grey;
-  Color get metaMine => dark ? const Color(0xFF7DA8D3) : const Color(0xFF5DAE55);
-  Color get metaOther => dark ? const Color(0xFF7F91A4) : Colors.grey;
-  Color get tickRead => dark ? const Color(0xFF6AB3F3) : const Color(0xFF3390EC);
-  Color get mainText => dark ? Colors.white : Colors.black;
-  Color get cardBg => dark ? const Color(0xFF17212B) : Colors.white;
+
+  /// اولین کلید موجود از تم .attheme، وگرنه رنگ پیش‌فرض روشن/تاریک
+  Color _p(List<String> keys, Color light, Color dk) {
+    final d = dark; // وابستگی به Theme تا با تغییر تم بازسازی بشه
+    return AtTheme.pick(keys) ?? (d ? dk : light);
+  }
+
+  Color get chatBg =>
+      _p(const ['chat_wallpaper', 'windowBackgroundGray'], const Color(0xFFE7EBF0), const Color(0xFF0E1621));
+  Color get bubbleMine => _p(const ['chat_outBubble'], const Color(0xFFEFFDDE), const Color(0xFF2B5278));
+  Color get bubbleOther => _p(const ['chat_inBubble'], Colors.white, const Color(0xFF182533));
+  Color get fieldFill => _p(const ['chat_messagePanelBackground', 'windowBackgroundGray'],
+      const Color(0xFFF1F3F5), const Color(0xFF242F3D));
+  Color get barBg => _p(const ['actionBarDefault', 'windowBackgroundWhite'], Colors.white, const Color(0xFF17212B));
+  Color get subText => _p(
+      const ['windowBackgroundWhiteGrayText', 'windowBackgroundWhiteGrayText2', 'chat_inTimeText'],
+      Colors.grey,
+      const Color(0xFF7F91A4));
+  Color get metaMine => _p(const ['chat_outTimeText'], const Color(0xFF5DAE55), const Color(0xFF7DA8D3));
+  Color get metaOther => _p(const ['chat_inTimeText'], Colors.grey, const Color(0xFF7F91A4));
+  Color get tickRead =>
+      _p(const ['chat_outSentCheckRead', 'chat_outSentCheck'], const Color(0xFF3390EC), const Color(0xFF6AB3F3));
+  Color get mainText => _p(const ['windowBackgroundWhiteBlackText'], Colors.black, Colors.white);
+  Color get cardBg => _p(const ['windowBackgroundWhite'], Colors.white, const Color(0xFF17212B));
+
+  /// رنگ متن داخل حباب‌ها (فقط وقتی تم سفارشی فعاله، وگرنه null = پیش‌فرض)
+  Color? get msgTextIn => AtTheme.pick(const ['chat_messageTextIn']);
+  Color? get msgTextOut => AtTheme.pick(const ['chat_messageTextOut']);
 }
 
 /// جهت متن را از اولین حرف معنادار تشخیص می‌دهد (فارسی/عربی → راست‌به‌چپ)

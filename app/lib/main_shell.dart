@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:ui';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'api.dart';
+import 'attheme.dart';
 import 'home_page.dart';
 import 'login_page.dart';
 import 'permissions_page.dart';
@@ -95,7 +97,7 @@ class _MainShellState extends State<MainShell> {
                         textDirection: TextDirection.ltr,
                         style: TextStyle(fontSize: 17, color: color ?? (dark ? Colors.white : Colors.black87))),
                   ),
-                  if (on) const Icon(CupertinoIcons.check_mark, size: 18, color: tgBlue),
+                  if (on) Icon(CupertinoIcons.check_mark, size: 18, color: tgBlue),
                 ],
               ),
             ),
@@ -119,7 +121,7 @@ class _MainShellState extends State<MainShell> {
             width: 34,
             height: 34,
             decoration: BoxDecoration(shape: BoxShape.circle, color: dark ? Colors.white12 : Colors.black12),
-            child: const Icon(CupertinoIcons.plus, size: 18, color: tgBlue),
+            child: Icon(CupertinoIcons.plus, size: 18, color: tgBlue),
           ),
           'Add account',
           color: tgBlue,
@@ -286,6 +288,30 @@ class _ProfileTab extends StatefulWidget {
 }
 
 class _ProfileTabState extends State<_ProfileTab> {
+  void _snack(String t) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
+  }
+
+  /// انتخاب فایل .attheme از حافظه و اعمالش
+  Future<void> _importTheme() async {
+    try {
+      final r = await FilePicker.platform.pickFiles(type: FileType.any, withData: true);
+      if (r == null || r.files.isEmpty) return;
+      final f = r.files.first;
+      final bytes = f.bytes;
+      if (bytes == null) {
+        _snack('Could not read the file');
+        return;
+      }
+      final ok = await AtTheme.applyBytes(bytes, f.name);
+      if (mounted) setState(() {});
+      _snack(ok ? 'Theme applied' : 'This is not a valid .attheme file');
+    } catch (_) {
+      _snack('Could not import the theme');
+    }
+  }
+
   void _themeMenu() {
     showCupertinoModalPopup(
       context: context,
@@ -293,13 +319,14 @@ class _ProfileTabState extends State<_ProfileTab> {
         Widget item(String label, ThemeMode m) => CupertinoActionSheetAction(
               onPressed: () {
                 Navigator.pop(ctx);
+                if (AtTheme.current.value != null) AtTheme.remove();
                 Api.setTheme(m);
               },
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(label),
-                  if (Api.themeMode.value == m) ...[
+                  if (Api.themeMode.value == m && AtTheme.current.value == null) ...[
                     const SizedBox(width: 8),
                     const Icon(CupertinoIcons.check_mark, size: 18),
                   ],
@@ -312,6 +339,25 @@ class _ProfileTabState extends State<_ProfileTab> {
             item('Light', ThemeMode.light),
             item('Dark', ThemeMode.dark),
             item('System default', ThemeMode.system),
+            CupertinoActionSheetAction(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _importTheme();
+              },
+              child: Text(AtTheme.current.value == null
+                  ? 'Import theme (.attheme)'
+                  : 'Import another theme (.attheme)'),
+            ),
+            if (AtTheme.current.value != null)
+              CupertinoActionSheetAction(
+                isDestructiveAction: true,
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  await AtTheme.remove();
+                  if (mounted) setState(() {});
+                },
+                child: Text('Remove "${AtTheme.current.value!.name}"'),
+              ),
           ],
           cancelButton: CupertinoActionSheetAction(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
         );
@@ -342,7 +388,9 @@ class _ProfileTabState extends State<_ProfileTab> {
     final me = Api.me;
     final name = (me?['username'] as String?) ?? Api.username ?? '';
     final bio = ((me?['bio'] as String?) ?? '').trim();
-    final themeLabel = Api.themeMode.value == ThemeMode.dark
+    final themeLabel = AtTheme.current.value != null
+        ? AtTheme.current.value!.name
+        : Api.themeMode.value == ThemeMode.dark
         ? 'Dark'
         : (Api.themeMode.value == ThemeMode.light ? 'Light' : 'System');
     return SafeArea(
@@ -355,7 +403,7 @@ class _ProfileTabState extends State<_ProfileTab> {
           ),
           const SizedBox(height: 12),
           Center(child: Text(name, textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600))),
-          Center(child: Text('@$name', textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 14.5, color: tgBlue))),
+          Center(child: Text('@$name', textDirection: TextDirection.ltr, style: TextStyle(fontSize: 14.5, color: tgBlue))),
           if (bio.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(32, 10, 32, 0),
