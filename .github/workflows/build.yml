@@ -86,6 +86,22 @@ jobs:
           echo "---- AndroidManifest ----"
           cat android/app/src/main/AndroidManifest.xml
 
+      - name: Force compileSdk 36 for old plugins
+        run: |
+          # پلاگین‌های قدیمی (file_picker, device_info_plus, ...) با SDK 34 کامپایل شدن
+          # ولی flutter_plugin_android_lifecycle حداقل 36 میخواد؛ برای همه‌ی ماژول‌ها 36 میذاریم.
+          mkdir -p "$HOME/.gradle/init.d"
+          cat > "$HOME/.gradle/init.d/force-compile-sdk.gradle" <<'GRADLE'
+          gradle.beforeProject { p ->
+              p.afterEvaluate {
+                  if (p.name != 'app' && p.hasProperty('android')) {
+                      p.android.compileSdk = 36
+                  }
+              }
+          }
+          GRADLE
+          cat "$HOME/.gradle/init.d/force-compile-sdk.gradle"
+
       - name: Build release APK
         working-directory: app
         run: |
