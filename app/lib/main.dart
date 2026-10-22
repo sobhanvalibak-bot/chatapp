@@ -6,6 +6,7 @@ import 'api.dart';
 import 'attheme.dart';
 import 'main_shell.dart';
 import 'login_page.dart';
+import 'offline_page.dart';
 import 'utils.dart';
 
 final navKey = GlobalKey<NavigatorState>();
@@ -36,6 +37,7 @@ Future<void> main() async {
     await AtTheme.load();
     if (Api.loggedIn) Api.connectWs();
   } catch (_) {}
+  Api.startMonitor();
   Api.onUnauthorized = () {
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => Api.loggedIn ? const MainShell() : const LoginPage()),
@@ -104,8 +106,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      Api.startMonitor();
       if (Api.loggedIn) Api.connectWs();
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      Api.stopMonitor();
       Api.disconnectWs();
     }
   }
@@ -126,6 +130,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           theme: _theme(Brightness.light),
           darkTheme: _theme(Brightness.dark),
           themeMode: mode,
+          builder: (context, child) => OfflineGate(child: child),
           home: Api.loggedIn ? const MainShell() : const LoginPage(),
         );
       },

@@ -253,6 +253,13 @@ String msgPreview(Map m) {
       final a = audioArtist(m);
       label = '🎵 ${a != null ? '$a - ' : ''}${audioTitle(m)}';
       break;
+    case 'voice':
+      final d = audioDuration(m);
+      label = '🎤 Voice message${d == null ? '' : ' (${fmtDur(d)})'}';
+      break;
+    case 'round':
+      label = '📹 Video message';
+      break;
     case 'image':
       label = '🖼 Photo';
       break;

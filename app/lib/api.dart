@@ -26,6 +26,12 @@ class Account {
       Account(id: j['id'] as int, username: j['username'] as String, token: j['token'] as String);
 }
 
+class OfflineState {
+  final bool noInternet; // true = اینترنت نیست، false = سرور جواب نمیده
+  final DateTime since;
+  OfflineState(this.noInternet, this.since);
+}
+
 /// برای لغو آپلود در حال انجام
 class UploadCancel {
   bool cancelled = false;
@@ -46,6 +52,83 @@ class Api {
   static void Function()? onUnauthorized;
   static String? notice;
   static String storageStatus = 'ok';
+
+  /// null = سرور در دسترسه؛ غیر از اون = آفلاین (صفحه‌ی Offline نشون داده میشه)
+  static final ValueNotifier<OfflineState?> offline = ValueNotifier(null);
+  static Timer? _mon;
+  static bool _checking = false;
+  static int _tick = 0;
+
+  static bool get isLocalServer {
+    try {
+      final h = Uri.parse(baseUrl).host;
+      return h == '127.0.0.1' || h == 'localhost' || h == '::1' || h == '[::1]';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static int get serverPort {
+    try {
+      final u = Uri.parse(baseUrl);
+      return u.hasPort ? u.port : (u.scheme == 'https' ? 443 : 80);
+    } catch (_) {
+      return 3001;
+    }
+  }
+
+  /// هر ۴ ثانیه وقتی آفلاینیم (و هر ~۱۶ ثانیه وقتی آنلاینیم) سرور رو چک میکنه
+  static void startMonitor() {
+    _mon?.cancel();
+    checkServer();
+    _mon = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (offline.value != null || ++_tick % 4 == 0) checkServer();
+    });
+  }
+
+  static void stopMonitor() {
+    _mon?.cancel();
+    _mon = null;
+  }
+
+  /// true = سرور جواب داد
+  static Future<bool> checkServer() async {
+    if (_checking) return offline.value == null;
+    _checking = true;
+    var up = false;
+    var noNet = false;
+    try {
+      try {
+        final r = await http.get(Uri.parse('$baseUrl/')).timeout(const Duration(seconds: 4));
+        up = r.statusCode < 500;
+      } catch (_) {}
+      if (!up && !isLocalServer) {
+        try {
+          await InternetAddress.lookup('example.com').timeout(const Duration(seconds: 3));
+        } catch (_) {
+          noNet = true;
+        }
+      }
+    } finally {
+      _checking = false;
+    }
+    final cur = offline.value;
+    if (up) {
+      if (cur != null) {
+        offline.value = null;
+        if (loggedIn) {
+          try {
+            connectWs();
+          } catch (_) {}
+        }
+      }
+    } else if (cur == null) {
+      offline.value = OfflineState(noNet, DateTime.now());
+    } else if (cur.noInternet != noNet) {
+      offline.value = OfflineState(noNet, cur.since);
+    }
+    return up;
+  }
 
   /// حالت تم (روشن / تاریک / سیستم)
   static final ValueNotifier<ThemeMode> themeMode = ValueNotifier(ThemeMode.system);
@@ -176,6 +259,7 @@ class Api {
           r = await http.post(uri, headers: _headers, body: json.encode(body ?? {})).timeout(t);
       }
     } catch (_) {
+      unawaited(checkServer());
       throw ApiException(
           'Could not connect to the server ($baseUrl). Make sure the server is running and the address is correct.');
     }
@@ -262,9 +346,42 @@ class Api {
     }
   }
 
+  /// برای اینکه تب پروفایل/تنظیمات بعد از ادمین شدن دوباره ساخته بشه
+  static final ValueNotifier<int> meTick = ValueNotifier(0);
+  static bool get isAdmin => me?['isAdmin'] == true;
+
+  // ---- admin ----
+  /// کد یک‌بارمصرف رو مصرف میکنه. خروجی: true = تازه ادمین شد، false = از قبل ادمین بود
+  static Future<bool> redeemAdminCode(String code) async {
+    final d = _map(await _req('POST', '/admin/redeem', body: {'code': code}));
+    final u = d['user'];
+    if (u is Map) {
+      await _applyMe(Map<String, dynamic>.from(u));
+      meTick.value++;
+    }
+    return d['alreadyAdmin'] != true;
+  }
+
+  static Future<List<Map<String, dynamic>>> adminUsers(String q) async =>
+      _list(await _req('GET', '/admin/users?q=${Uri.encodeQueryComponent(q)}'));
+
+  static Future<Map<String, dynamic>> adminCreateCode() async =>
+      _map(await _req('POST', '/admin/codes'));
+
+  static Future<List<Map<String, dynamic>>> adminCodes() async =>
+      _list(await _req('GET', '/admin/codes'));
+
+  static Future<void> adminDeleteCode(String id) async {
+    await _req('DELETE', '/admin/codes/$id');
+  }
+
+  static Future<Map<String, dynamic>> adminSetAdmin(int userId, bool value) async =>
+      _map(await _req('POST', '/admin/users/$userId/admin', body: {'isAdmin': value}));
+
   static Future<Map<String, dynamic>> refreshMe() async {
     final d = _map(await _req('GET', '/me'));
     await _applyMe(d);
+    meTick.value++;
     return d;
   }
 
@@ -448,9 +565,18 @@ class Api {
     int? replyTo,
     void Function(double)? onProgress,
     UploadCancel? cancel,
+    String? mediaKind, // 'voice' | 'round' (ضبط‌شده داخل اپ)
+    int? durationMs,
+    String? waveform, // base64
   }) =>
       _postFile('/messages/$peer/file', path, name,
-          caption: caption, replyTo: replyTo, onProgress: onProgress, cancel: cancel);
+          caption: caption,
+          replyTo: replyTo,
+          onProgress: onProgress,
+          cancel: cancel,
+          mediaKind: mediaKind,
+          durationMs: durationMs,
+          waveform: waveform);
 
   static Future<Map<String, dynamic>> _postFile(
     String urlPath,
@@ -460,6 +586,9 @@ class Api {
     int? replyTo,
     void Function(double)? onProgress,
     UploadCancel? cancel,
+    String? mediaKind,
+    int? durationMs,
+    String? waveform,
   }) async {
     if (cancel?.cancelled == true) throw ApiException('Upload cancelled');
     final file = File(path);
@@ -475,6 +604,9 @@ class Api {
       rq.headers.set('x-file-name', Uri.encodeComponent(name.length > 150 ? name.substring(name.length - 150) : name));
       if (caption.isNotEmpty) rq.headers.set('x-caption', Uri.encodeComponent(caption));
       if (replyTo != null) rq.headers.set('x-reply-to', replyTo.toString());
+      if (mediaKind != null) rq.headers.set('x-media-kind', mediaKind);
+      if (durationMs != null) rq.headers.set('x-duration', durationMs.toString());
+      if (waveform != null && waveform.isNotEmpty) rq.headers.set('x-waveform', waveform);
       rq.contentLength = len;
       var sent = 0;
       await for (final chunk in file.openRead()) {
@@ -542,8 +674,14 @@ class Api {
             }
           } catch (_) {}
         },
-        onDone: () => _scheduleRetry(ch),
-        onError: (_) => _scheduleRetry(ch),
+        onDone: () {
+          unawaited(checkServer());
+          _scheduleRetry(ch);
+        },
+        onError: (_) {
+          unawaited(checkServer());
+          _scheduleRetry(ch);
+        },
         cancelOnError: true,
       );
     } catch (_) {

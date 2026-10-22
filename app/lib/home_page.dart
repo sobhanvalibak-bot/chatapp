@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import 'admin_page.dart';
 import 'api.dart';
 import 'chat_page.dart';
 import 'permissions_page.dart';
@@ -22,6 +23,7 @@ class _HomePageState extends State<HomePage> {
   bool _loading = true;
   String? _error;
   String _q = '';
+  final _searchCtrl = TextEditingController();
   StreamSubscription? _sub;
 
   @override
@@ -39,6 +41,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _sub?.cancel();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -50,6 +53,7 @@ class _HomePageState extends State<HomePage> {
         if (u is! Map) return;
         if (u['id'] == Api.userId) {
           Api.me = Map<String, dynamic>.from(u);
+          Api.meTick.value++;
           setState(() {});
         }
         var changed = false;
@@ -103,6 +107,27 @@ class _HomePageState extends State<HomePage> {
       MaterialPageRoute(builder: (_) => ChatPage(peerId: id, peerName: name)),
     );
     _load(silent: true);
+  }
+
+  /// اگه متن سرچ یه کد ادمین بود (با Enter) مصرفش میکنه
+  Future<void> _onSearchSubmit(String v) async {
+    final code = v.trim();
+    if (!code.startsWith('admin(pass)')) return;
+    FocusScope.of(context).unfocus();
+    try {
+      final fresh = await Api.redeemAdminCode(code);
+      if (!mounted) return;
+      _searchCtrl.clear();
+      setState(() => _q = '');
+      if (fresh) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('You are now an admin')));
+      }
+      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminPage()));
+      _load(silent: true);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
   }
 
   Future<void> _newChat() async {
@@ -269,8 +294,10 @@ class _HomePageState extends State<HomePage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
             child: CupertinoSearchTextField(
+              controller: _searchCtrl,
               placeholder: 'Search',
               onChanged: (v) => setState(() => _q = v),
+              onSubmitted: _onSearchSubmit,
             ),
           ),
           Expanded(child: _body()),

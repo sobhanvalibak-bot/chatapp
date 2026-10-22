@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import 'admin_page.dart';
 import 'api.dart';
 import 'attheme.dart';
 import 'home_page.dart';
@@ -288,6 +289,22 @@ class _ProfileTab extends StatefulWidget {
 }
 
 class _ProfileTabState extends State<_ProfileTab> {
+  @override
+  void initState() {
+    super.initState();
+    Api.meTick.addListener(_onMe);
+  }
+
+  @override
+  void dispose() {
+    Api.meTick.removeListener(_onMe);
+    super.dispose();
+  }
+
+  void _onMe() {
+    if (mounted) setState(() {});
+  }
+
   void _snack(String t) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
@@ -423,6 +440,11 @@ class _ProfileTabState extends State<_ProfileTab> {
             _themeMenu();
           }, trailing: themeLabel),
           const Divider(height: 0.5, thickness: 0.5, indent: 54),
+          if (Api.isAdmin) ...[
+            _row(CupertinoIcons.lock_shield_fill, 'Admin panel',
+                () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminPage()))),
+            const Divider(height: 0.5, thickness: 0.5, indent: 54),
+          ],
           _row(CupertinoIcons.shield_lefthalf_fill, 'Permissions',
               () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PermissionsPage()))),
           const Divider(height: 0.5, thickness: 0.5, indent: 54),

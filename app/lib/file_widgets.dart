@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -9,6 +10,7 @@ import 'attheme.dart';
 import 'media_viewer.dart';
 import 'player.dart';
 import 'utils.dart';
+import 'voice_video.dart';
 
 /// عکس‌های کوچک‌تر از این حجم مستقیم داخل حباب نشون داده میشن
 const int kInlineImageMax = 5 * 1024 * 1024;
@@ -127,6 +129,8 @@ class _FileContentState extends State<FileContent> {
 
   Future<void> _playAudio() async {
     try {
+      unawaited(VoiceCtl.i.stop());
+      RoundCtl.i.stopAll();
       await AudioCtl.i.toggle(widget.msg, widget.audioQueue);
     } catch (e) {
       _snack('Could not play this audio file');
@@ -365,6 +369,10 @@ class _FileContentState extends State<FileContent> {
       case 'image':
         if (size <= kInlineImageMax) return _image(w);
         return _card(w);
+      case 'voice':
+        return VoiceBubble(msg: widget.msg, mine: widget.mine, width: w);
+      case 'round':
+        return RoundVideoBubble(msg: widget.msg, size: w);
       case 'video':
         return VideoThumb(msg: widget.msg, width: w);
       default:

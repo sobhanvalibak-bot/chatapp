@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:file_picker/file_picker.dart';
@@ -15,6 +17,7 @@ import 'permissions_page.dart';
 import 'player.dart';
 import 'profile_page.dart';
 import 'utils.dart';
+import 'voice_video.dart';
 
 /// فایلی که در حال آپلوده (قبل از اینکه سرور پیام رو بسازه)
 class _Pending {
@@ -49,6 +52,8 @@ class _ChatPageState extends State<ChatPage> {
   Map<String, dynamic>? _replying; // پیامی که داریم بهش ریپلای می‌کنیم
   final List<_Pending> _pending = [];
   int _pinIdx = -1; // اندیس پیام پینی که الان تو بنر نشون داده میشه (-1 = آخری)
+  final MsgRecorder _rec = MsgRecorder();
+  final GlobalKey _actionKey = GlobalKey();
 
   @override
   void initState() {
@@ -57,11 +62,13 @@ class _ChatPageState extends State<ChatPage> {
     _load();
     _loadPeer();
     _sub = Api.events.listen(_onEvent);
+    _rec.onLimit = () => _finishRec(send: true);
   }
 
   @override
   void dispose() {
     _sub?.cancel();
+    _rec.dispose();
     _ctrl.dispose();
     _sc.dispose();
     super.dispose();
@@ -287,6 +294,93 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  // ---- ضبط ویس / ویدیو مسیج ----
+  Future<void> _recStart() async {
+    FocusScope.of(context).unfocus();
+    final err = await _rec.start();
+    if (!mounted) return;
+    if (err != null) {
+      _snack(err);
+    } else if (_rec.lastTooShort) {
+      _rec.lastTooShort = false;
+      _snack('Hold to record, release to send');
+    }
+  }
+
+  Future<void> _finishRec({required bool send}) async {
+    final r = await _rec.finish(send: send);
+    if (!mounted) return;
+    if (r == null) {
+      if (_rec.lastTooShort) {
+        _rec.lastTooShort = false;
+        _snack('Hold to record, release to send');
+      }
+      return;
+    }
+    await _sendRecorded(r);
+  }
+
+  Future<void> _recRelease() async {
+    final r = await _rec.release();
+    if (!mounted) return;
+    if (r == null) {
+      if (_rec.lastTooShort) {
+        _rec.lastTooShort = false;
+        _snack('Hold to record, release to send');
+      }
+      return;
+    }
+    await _sendRecorded(r);
+  }
+
+  Future<void> _sendRecorded(RecResult r) async {
+    final f = File(r.path);
+    int size = 0;
+    try {
+      size = await f.length();
+    } catch (_) {}
+    if (size == 0) return;
+    if (size > Api.maxFileBytes) {
+      _snack('The recording is too large (max 30 MB)');
+      try {
+        await f.delete();
+      } catch (_) {}
+      return;
+    }
+    final rp = _replying;
+    if (rp != null && mounted) setState(() => _replying = null);
+    final voice = r.mode == RecMode.voice;
+    final p = _Pending(voice ? 'Voice message' : 'Video message', size);
+    setState(() {
+      _pending.add(p);
+      p.started = true;
+    });
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    try {
+      final m = await Api.sendFile(
+        widget.peerId,
+        r.path,
+        voice ? 'voice_$ts.m4a' : 'video_message_$ts.mp4',
+        replyTo: rp?['id'] as int?,
+        cancel: p.cancel,
+        mediaKind: voice ? 'voice' : 'round',
+        durationMs: r.durationMs,
+        waveform: r.waveform,
+        onProgress: (v) {
+          if (mounted && ((v - p.progress) >= 0.01 || v >= 1)) setState(() => p.progress = v);
+        },
+      );
+      _add(m);
+    } on ApiException catch (e) {
+      if (!p.cancel.cancelled) _snack(e.message);
+    } finally {
+      if (mounted) setState(() => _pending.remove(p));
+      try {
+        await f.delete();
+      } catch (_) {}
+    }
+  }
+
   void _startEdit(Map<String, dynamic> m) {
     setState(() {
       _editing = m;
@@ -500,6 +594,7 @@ class _ChatPageState extends State<ChatPage> {
     const r = Radius.circular(18);
     const tail = Radius.circular(4);
     final metaColor = mine ? context.metaMine : context.metaOther;
+    if (fileKind(m) == 'round' && text.isEmpty && m['reply'] is! Map) return _roundBare(m, key: key);
     return Container(
       key: key,
       constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
@@ -551,6 +646,50 @@ class _ChatPageState extends State<ChatPage> {
           ),
         ],
       ),
+    );
+  }
+
+  /// ویدیو مسیج دایره‌ای بدون حباب (مثل تلگرام) با ساعت و تیک روی دایره
+  Widget _roundBare(Map<String, dynamic> m, {Key? key}) {
+    final mine = _mineMsg(m);
+    final read = m['read'] == true;
+    final size = math.min(230.0, MediaQuery.of(context).size.width * 0.66);
+    return Column(
+      key: key,
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        Stack(
+          children: [
+            RoundVideoBubble(msg: m, size: size),
+            Positioned(
+              right: 10,
+              bottom: 10,
+              child: IgnorePointer(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(10)),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (m['pinned'] == true) ...[
+                        const Icon(Icons.push_pin, size: 11, color: Colors.white70),
+                        const SizedBox(width: 3),
+                      ],
+                      Text(fmtHm(m['createdAt'] as int), style: const TextStyle(fontSize: 11, color: Colors.white)),
+                      if (mine) ...[
+                        const SizedBox(width: 3),
+                        Icon(read ? Icons.done_all : Icons.done, size: 14, color: read ? const Color(0xFF6AB3F3) : Colors.white),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        _reactionChips(m),
+      ],
     );
   }
 
@@ -851,8 +990,8 @@ class _ChatPageState extends State<ChatPage> {
           filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
-            width: 44,
-            height: 44,
+            width: 48,
+            height: 48,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
@@ -866,63 +1005,151 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  Widget _pill(Widget child) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48),
+          decoration: BoxDecoration(
+            color: context.dark ? const Color(0xAA1C2733) : const Color(0xCCFFFFFF),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: context.dark ? Colors.white12 : Colors.black12, width: 0.8),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  /// دکمه‌ی سمت راست: ارسال متن / (ویس یا ویدیو) با نگه داشتن
+  /// آیکن ارسال (بدون دکمه‌ی دایره‌ای پشتش)
+  Widget _sendIcon({required VoidCallback? onTap, required bool enabled, bool edit = false}) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: Center(
+          child: Icon(
+            edit ? CupertinoIcons.checkmark_circle_fill : CupertinoIcons.arrow_up_circle_fill,
+            color: enabled ? tgBlue : context.subText.withOpacity(0.5),
+            size: 38,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// دکمه‌ی سمت راست: آیکن ارسال / آیکن ویس یا ویدیو (نگه داشتن = ضبط)
+  Widget _actionButton(bool hasText) {
+    final r = _rec;
+    // قفل شده: آیکن ارسال
+    if (r.phase == RecPhase.locked) {
+      return GestureDetector(
+        onTap: () => _finishRec(send: true),
+        child: Container(
+          width: 66,
+          height: 66,
+          decoration: BoxDecoration(color: tgBlue, shape: BoxShape.circle),
+          alignment: Alignment.center,
+          child: const Icon(Icons.send_rounded, color: Colors.white, size: 30),
+        ),
+      );
+    }
+    if (hasText || _editing != null) {
+      return _sendIcon(onTap: hasText ? _send : null, enabled: hasText, edit: _editing != null);
+    }
+    final held = r.active;
+    final icon = r.mode == RecMode.voice ? CupertinoIcons.mic : CupertinoIcons.video_camera;
+    return RecordGesture(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        r.toggleMode();
+      },
+      onStart: _recStart,
+      onMove: r.drag,
+      onEnd: _recRelease,
+      onAbort: () {
+        if (_rec.phase != RecPhase.locked) _finishRec(send: false);
+      },
+      child: AnimatedScale(
+        scale: held ? 1.8 : 1.0,
+        duration: const Duration(milliseconds: 160),
+        child: Container(
+          width: 48,
+          height: 48,
+          alignment: Alignment.center,
+          // فقط موقع ضبط یه دایره‌ی آبی پشت آیکن میاد
+          decoration: BoxDecoration(color: held ? tgBlue : Colors.transparent, shape: BoxShape.circle),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            transitionBuilder: (c, a) => ScaleTransition(scale: a, child: FadeTransition(opacity: a, child: c)),
+            child: Icon(
+              icon,
+              key: ValueKey(icon),
+              color: held ? Colors.white : context.mainText,
+              size: 29,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _inputBar() {
     return SafeArea(
       top: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            _glassCircle(
-              onTap: _attach,
-              child: Icon(Icons.attach_file_rounded, color: context.subText, size: 23),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(22),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                  child: Container(
-                    constraints: const BoxConstraints(minHeight: 44),
-                    decoration: BoxDecoration(
-                      color: context.dark ? const Color(0xAA1C2733) : const Color(0xCCFFFFFF),
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(color: context.dark ? Colors.white12 : Colors.black12, width: 0.8),
-                    ),
-                    child: TextField(
-                      controller: _ctrl,
-                      minLines: 1,
-                      maxLines: 5,
-                      keyboardType: TextInputType.multiline,
-                      decoration: const InputDecoration(
-                        hintText: 'Message',
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-                      ),
-                    ),
+        child: AnimatedBuilder(
+          animation: _rec,
+          builder: (_, __) {
+            final recording = _rec.active;
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (!recording) ...[
+                  _glassCircle(
+                    onTap: _attach,
+                    child: Icon(CupertinoIcons.paperclip, color: context.mainText, size: 26),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: recording
+                      ? _pill(RecordingStrip(rec: _rec, onTrash: () => _finishRec(send: false)))
+                      : _pill(
+                          TextField(
+                            controller: _ctrl,
+                            minLines: 1,
+                            maxLines: 5,
+                            keyboardType: TextInputType.multiline,
+                            style: const TextStyle(fontSize: 18),
+                            decoration: InputDecoration(
+                              hintText: 'Message',
+                              hintStyle: TextStyle(fontSize: 18, color: context.subText),
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                            ),
+                          ),
+                        ),
+                ),
+                const SizedBox(width: 8),
+                KeyedSubtree(
+                  key: _actionKey,
+                  child: ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: _ctrl,
+                    builder: (_, v, __) => _actionButton(v.text.trim().isNotEmpty),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            ValueListenableBuilder<TextEditingValue>(
-              valueListenable: _ctrl,
-              builder: (_, v, __) {
-                final can = v.text.trim().isNotEmpty;
-                return _glassCircle(
-                  onTap: can ? _send : null,
-                  color: can ? tgBlue : null,
-                  child: Icon(
-                    _editing != null ? Icons.check : CupertinoIcons.arrow_up,
-                    color: can ? Colors.white : context.subText,
-                    size: 22,
-                  ),
-                );
-              },
-            ),
-          ],
+              ],
+            );
+          },
         ),
       ),
     );
@@ -991,7 +1218,46 @@ class _ChatPageState extends State<ChatPage> {
         children: [
           _pinBanner(),
           const MiniPlayer(),
-          Expanded(child: _list()),
+          Expanded(
+            child: Stack(
+              children: [
+                _list(),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedBuilder(
+                      animation: _rec,
+                      builder: (_, __) => Stack(
+                        children: [
+                          Positioned.fill(child: RoundRecordOverlay(rec: _rec)),
+                          Positioned.fill(child: LockHint(rec: _rec)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                // دکمه‌های قابل لمس حین ضبط (چراغ قوه / دوربین / مکث)
+                Positioned.fill(
+                  child: AnimatedBuilder(
+                    animation: _rec,
+                    builder: (_, __) => Stack(
+                      children: [
+                        Positioned.fill(
+                          child: RoundTools(
+                            rec: _rec,
+                            onFlip: () {
+                              final now = _rec.flipCamera();
+                              if (!now) _snack('Camera will switch for your next video message');
+                            },
+                          ),
+                        ),
+                        Positioned.fill(child: PauseButton(rec: _rec)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
           _editBar(),
           _replyBar(),
           _inputBar(),
