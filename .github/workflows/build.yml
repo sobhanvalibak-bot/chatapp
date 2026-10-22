@@ -48,6 +48,9 @@ jobs:
               ('android.permission.FOREGROUND_SERVICE', ''),
               ('android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK', ''),
               ('android.permission.WAKE_LOCK', ''),
+              ('android.permission.RECORD_AUDIO', ''),
+              ('android.permission.CAMERA', ''),
+              ('android.permission.MODIFY_AUDIO_SETTINGS', ''),
           ]
           perm_xml = ''.join('    <uses-permission android:name="%s"%s/>\n' % (n, e) for n, e in perms)
           s = s.replace('<application', perm_xml + '    <application android:usesCleartextTraffic="true"', 1)
@@ -85,6 +88,27 @@ jobs:
           PY
           echo "---- AndroidManifest ----"
           cat android/app/src/main/AndroidManifest.xml
+
+      - name: Raise minSdk to 24 (needed by the audio recorder plugin)
+        working-directory: app
+        run: |
+          python3 - <<'PY'
+          import glob, re
+          done = False
+          for f in glob.glob('android/app/build.gradle*'):
+              s = open(f, encoding='utf8').read()
+              if f.endswith('.kts'):
+                  n = re.sub(r'minSdk\s*=\s*flutter\.minSdkVersion', 'minSdk = maxOf(24, flutter.minSdkVersion)', s)
+              else:
+                  n = re.sub(r'minSdkVersion\s+flutter\.minSdkVersion', 'minSdkVersion Math.max(24, flutter.minSdkVersion)', s)
+              if n != s:
+                  open(f, 'w', encoding='utf8').write(n)
+                  done = True
+                  print('patched', f)
+          if not done:
+              print('WARNING: minSdk line not found; check android/app/build.gradle')
+          PY
+          grep -n "minSdk" android/app/build.gradle* || true
 
       - name: Force compileSdk 36 for old plugins
         run: |
