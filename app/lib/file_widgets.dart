@@ -4,48 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 
 import 'api.dart';
+import 'media_viewer.dart';
 import 'player.dart';
 import 'utils.dart';
 
 /// عکس‌های کوچک‌تر از این حجم مستقیم داخل حباب نشون داده میشن
 const int kInlineImageMax = 5 * 1024 * 1024;
-
-/// نمایش تمام‌صفحه‌ی عکس داخل خود اپ
-void openImageViewer(BuildContext context, Map<String, dynamic> msg) {
-  final f = fileOf(msg)!;
-  Navigator.of(context).push(
-    MaterialPageRoute(
-      builder: (_) => Scaffold(
-        backgroundColor: Colors.black,
-        appBar: AppBar(
-          backgroundColor: Colors.black,
-          foregroundColor: Colors.white,
-          title: Text(f['name'] as String? ?? 'Photo',
-              maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 16)),
-        ),
-        body: Center(
-          child: InteractiveViewer(
-            maxScale: 5,
-            child: Image.network(
-              Api.fileUrl(f),
-              fit: BoxFit.contain,
-              loadingBuilder: (_, child, p) => p == null
-                  ? child
-                  : Center(
-                      child: CircularProgressIndicator(
-                        value: p.expectedTotalBytes == null ? null : p.cumulativeBytesLoaded / p.expectedTotalBytes!,
-                        color: Colors.white,
-                      ),
-                    ),
-              errorBuilder: (_, __, ___) =>
-                  const Text('Could not load the image', style: TextStyle(color: Colors.white70)),
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
-}
 
 IconData _iconFor(Map<String, dynamic> f) {
   final name = ((f['name'] as String?) ?? '').toLowerCase();
@@ -64,7 +28,16 @@ class FileContent extends StatefulWidget {
   final Map<String, dynamic> msg;
   final bool mine;
   final List<Map<String, dynamic>> audioQueue;
-  const FileContent({super.key, required this.msg, required this.mine, required this.audioQueue});
+
+  /// همه‌ی عکس‌های این گفتگو (برای سوایپ بین عکس‌ها در گالری)
+  final List<Map<String, dynamic>> imageQueue;
+  const FileContent({
+    super.key,
+    required this.msg,
+    required this.mine,
+    required this.audioQueue,
+    this.imageQueue = const [],
+  });
 
   @override
   State<FileContent> createState() => _FileContentState();
@@ -245,7 +218,15 @@ class _FileContentState extends State<FileContent> {
   Widget _image(double w) {
     final f = _f;
     return GestureDetector(
-      onTap: () => openImageViewer(context, widget.msg),
+      onTap: () {
+        var q = widget.imageQueue;
+        var i = q.indexWhere((x) => x['id'] == widget.msg['id']);
+        if (i < 0) {
+          q = [widget.msg];
+          i = 0;
+        }
+        openGallery(context, galleryFromMessages(q), i);
+      },
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Container(
@@ -356,6 +337,8 @@ class _FileContentState extends State<FileContent> {
       case 'image':
         if (size <= kInlineImageMax) return _image(w);
         return _card(w);
+      case 'video':
+        return VideoThumb(msg: widget.msg, width: w);
       default:
         return _card(w);
     }

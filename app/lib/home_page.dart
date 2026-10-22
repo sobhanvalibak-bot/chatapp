@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'chat_page.dart';
-import 'login_page.dart';
 import 'permissions_page.dart';
 import 'player.dart';
 import 'profile_page.dart';
@@ -114,145 +113,6 @@ class _HomePageState extends State<HomePage> {
   void _openProfile(Map<String, dynamic> peer) {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => ProfilePage(userId: peer['id'] as int, initial: peer)),
-    );
-  }
-
-  void _themeMenu() {
-    showCupertinoModalPopup(
-      context: context,
-      builder: (ctx) {
-        Widget item(String label, ThemeMode m) => CupertinoActionSheetAction(
-              onPressed: () {
-                Navigator.pop(ctx);
-                Api.setTheme(m);
-              },
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(label),
-                  if (Api.themeMode.value == m) ...[
-                    const SizedBox(width: 8),
-                    const Icon(CupertinoIcons.check_mark, size: 18),
-                  ],
-                ],
-              ),
-            );
-        return CupertinoActionSheet(
-          title: const Text('Appearance'),
-          actions: [
-            item('Light', ThemeMode.light),
-            item('Dark', ThemeMode.dark),
-            item('System default', ThemeMode.system),
-          ],
-          cancelButton: CupertinoActionSheetAction(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close'),
-          ),
-        );
-      },
-    );
-  }
-
-  void _profile() {
-    showCupertinoModalPopup(
-      context: context,
-      builder: (ctx) => CupertinoActionSheet(
-        title: const Text('Accounts'),
-        actions: [
-          CupertinoActionSheetAction(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ProfileEditPage()),
-              );
-              if (mounted) setState(() {});
-            },
-            child: const Text('Edit profile'),
-          ),
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _themeMenu();
-            },
-            child: Text(Api.themeMode.value == ThemeMode.dark
-                ? 'Appearance: Dark'
-                : (Api.themeMode.value == ThemeMode.light ? 'Appearance: Light' : 'Appearance: System')),
-          ),
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PermissionsPage()));
-            },
-            child: const Text('Permissions'),
-          ),
-          for (final a in Api.accounts)
-            CupertinoActionSheetAction(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                if (a.id == Api.userId) return;
-                await AudioCtl.i.close();
-                await Api.switchTo(a);
-                if (!mounted) return;
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const HomePage()),
-                  (r) => false,
-                );
-              },
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Avatar(
-                    id: a.id,
-                    name: a.username,
-                    size: 26,
-                    url: a.id == Api.userId ? (Api.me?['avatar'] as String?) : null,
-                  ),
-                  const SizedBox(width: 10),
-                  Text(a.username, textDirection: TextDirection.ltr),
-                  if (a.id == Api.userId) ...[
-                    const SizedBox(width: 8),
-                    const Icon(CupertinoIcons.check_mark, size: 18),
-                  ],
-                ],
-              ),
-            ),
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const LoginPage(addingAccount: true)),
-              );
-            },
-            child: const Text('Add account'),
-          ),
-          CupertinoActionSheetAction(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await showServerDialog(context);
-              if (mounted) _load();
-            },
-            child: const Text('Server address'),
-          ),
-          CupertinoActionSheetAction(
-            isDestructiveAction: true,
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await AudioCtl.i.close();
-              await Api.logout();
-              if (!mounted) return;
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => Api.loggedIn ? const HomePage() : const LoginPage()),
-                (r) => false,
-              );
-            },
-            child: Text('Log out @${Api.username ?? ''}'),
-          ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Close'),
-        ),
-      ),
     );
   }
 
@@ -382,6 +242,7 @@ class _HomePageState extends State<HomePage> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
+        padding: const EdgeInsets.only(bottom: 110),
         itemCount: list.length,
         separatorBuilder: (_, __) => const Divider(height: 0.5, thickness: 0.5, indent: 78),
         itemBuilder: (_, i) => _tile(list[i]),
@@ -394,18 +255,7 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Chats'),
-        leading: InkResponse(
-          onTap: _profile,
-          onLongPress: _profile,
-          child: Center(
-            child: Avatar(
-              id: Api.userId ?? 0,
-              name: Api.username ?? '?',
-              size: 32,
-              url: Api.me?['avatar'] as String?,
-            ),
-          ),
-        ),
+        automaticallyImplyLeading: false,
         actions: [
           IconButton(
             icon: const Icon(CupertinoIcons.square_pencil, size: 24),

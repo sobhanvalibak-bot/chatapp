@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 
 import 'api.dart';
-import 'home_page.dart';
+import 'main_shell.dart';
 import 'login_page.dart';
 import 'utils.dart';
 
@@ -36,7 +36,7 @@ Future<void> main() async {
   } catch (_) {}
   Api.onUnauthorized = () {
     navKey.currentState?.pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => Api.loggedIn ? const HomePage() : const LoginPage()),
+      MaterialPageRoute(builder: (_) => Api.loggedIn ? const MainShell() : const LoginPage()),
       (r) => false,
     );
   };
@@ -113,7 +113,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         theme: _theme(Brightness.light),
         darkTheme: _theme(Brightness.dark),
         themeMode: mode,
-        home: Api.loggedIn ? const HomePage() : const LoginPage(),
+        home: Api.loggedIn ? const MainShell() : const LoginPage(),
       ),
     );
   }

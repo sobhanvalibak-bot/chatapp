@@ -243,3 +243,31 @@ String msgPreview(Map m) {
   }
   return text.isEmpty ? label : '$label  $text';
 }
+
+// ---------------------------------------------------------------------------
+// عکس‌ها و آهنگ پروفایل
+// ---------------------------------------------------------------------------
+
+/// عکس‌های پروفایل یک کاربر: [{id, url}] (اولی = عکس اصلی)
+List<Map<String, dynamic>> userPhotos(Map u) {
+  final p = u['photos'];
+  if (p is List && p.isNotEmpty) {
+    return p.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+  final a = u['avatar'];
+  if (a is String && a.isNotEmpty) return [{'id': 'main', 'url': a}];
+  return [];
+}
+
+/// آهنگ پروفایل رو شبیه یه «پیام آهنگ» درمیاره تا با همون پلیر پخش بشه
+Map<String, dynamic>? profileMusicMsg(Map u) {
+  final m = u['music'];
+  if (m is! Map) return null;
+  return {
+    'id': 'pm_${u['id']}',
+    'from': u['id'],
+    'to': u['id'],
+    'text': '',
+    'file': Map<String, dynamic>.from(m),
+  };
+}

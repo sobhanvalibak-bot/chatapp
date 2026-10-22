@@ -277,17 +277,59 @@ class Api {
     return d;
   }
 
-  static Future<Map<String, dynamic>> uploadAvatar(List<int> bytes) async {
-    final d = _map(await _req('POST', '/me/avatar', body: {'data': base64Encode(bytes)}, timeout: 40));
+  /// اضافه کردن یک عکس به پروفایل (عکس جدید میشه عکس اصلی)
+  static Future<Map<String, dynamic>> addPhoto(List<int> bytes) async {
+    final d = _map(await _req('POST', '/me/photos', body: {'data': base64Encode(bytes)}, timeout: 40));
     await _applyMe(d);
     return d;
   }
 
-  static Future<Map<String, dynamic>> removeAvatar() async {
-    final d = _map(await _req('DELETE', '/me/avatar'));
+  static Future<Map<String, dynamic>> deletePhoto(String id) async {
+    final d = _map(await _req('DELETE', '/me/photos/$id'));
     await _applyMe(d);
     return d;
   }
+
+  static Future<Map<String, dynamic>> setMainPhoto(String id) async {
+    final d = _map(await _req('POST', '/me/photos/$id/main'));
+    await _applyMe(d);
+    return d;
+  }
+
+  /// گذاشتن آهنگِ یک پیام روی پروفایل خودم
+  static Future<Map<String, dynamic>> setMusicFromMessage(int messageId) async {
+    final d = _map(await _req('POST', '/me/music', body: {'messageId': messageId}, timeout: 40));
+    await _applyMe(d);
+    return d;
+  }
+
+  /// گذاشتن آهنگِ پروفایل یه کاربر دیگه روی پروفایل خودم
+  static Future<Map<String, dynamic>> setMusicFromUser(int userId) async {
+    final d = _map(await _req('POST', '/me/music', body: {'userId': userId}, timeout: 40));
+    await _applyMe(d);
+    return d;
+  }
+
+  /// آپلود مستقیم آهنگ از گوشی برای پروفایل
+  static Future<Map<String, dynamic>> uploadMusic(
+    String path,
+    String name, {
+    void Function(double)? onProgress,
+  }) async {
+    final d = await _postFile('/me/music/upload', path, name, onProgress: onProgress);
+    await _applyMe(d);
+    return d;
+  }
+
+  static Future<Map<String, dynamic>> removeMusic() async {
+    final d = _map(await _req('DELETE', '/me/music'));
+    await _applyMe(d);
+    return d;
+  }
+
+  /// فایل‌هایی که من و این کاربر برای هم فرستادیم (جدیدترین اول)
+  static Future<List<Map<String, dynamic>>> shared(int peer) async =>
+      _list(await _req('GET', '/shared/$peer'));
 
   static Future<Map<String, dynamic>> user(int id) async => _map(await _req('GET', '/users/$id'));
 
@@ -300,8 +342,12 @@ class Api {
   static Future<List<Map<String, dynamic>>> history(int peer) async =>
       _list(await _req('GET', '/messages/$peer'));
 
-  static Future<Map<String, dynamic>> send(int peer, String text) async =>
-      _map(await _req('POST', '/messages/$peer', body: {'text': text}));
+  static Future<Map<String, dynamic>> send(int peer, String text, {int? replyTo}) async =>
+      _map(await _req('POST', '/messages/$peer', body: {'text': text, if (replyTo != null) 'replyTo': replyTo}));
+
+  /// emoji = null → برداشتن ری‌اکشن خودم؛ دوباره زدن همون ایموجی هم برمیداره
+  static Future<Map<String, dynamic>> reactMessage(int id, String? emoji) async =>
+      _map(await _req('POST', '/message/$id/react', body: {'emoji': emoji}));
 
   static Future<Map<String, dynamic>> editMessage(int id, String text) async =>
       _map(await _req('PUT', '/message/$id', body: {'text': text}));
@@ -399,9 +445,23 @@ class Api {
     String path,
     String name, {
     String caption = '',
+    int? replyTo,
+    void Function(double)? onProgress,
+    UploadCancel? cancel,
+  }) =>
+      _postFile('/messages/$peer/file', path, name,
+          caption: caption, replyTo: replyTo, onProgress: onProgress, cancel: cancel);
+
+  static Future<Map<String, dynamic>> _postFile(
+    String urlPath,
+    String path,
+    String name, {
+    String caption = '',
+    int? replyTo,
     void Function(double)? onProgress,
     UploadCancel? cancel,
   }) async {
+    if (cancel?.cancelled == true) throw ApiException('Upload cancelled');
     final file = File(path);
     final len = await file.length();
     if (len == 0) throw ApiException('The file is empty');
@@ -409,11 +469,12 @@ class Api {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
     cancel?._client = client;
     try {
-      final rq = await client.postUrl(Uri.parse('$baseUrl/messages/$peer/file'));
+      final rq = await client.postUrl(Uri.parse('$baseUrl$urlPath'));
       rq.headers.set('Authorization', 'Bearer $token');
       rq.headers.set('Content-Type', 'application/octet-stream');
       rq.headers.set('x-file-name', Uri.encodeComponent(name.length > 150 ? name.substring(name.length - 150) : name));
       if (caption.isNotEmpty) rq.headers.set('x-caption', Uri.encodeComponent(caption));
+      if (replyTo != null) rq.headers.set('x-reply-to', replyTo.toString());
       rq.contentLength = len;
       var sent = 0;
       await for (final chunk in file.openRead()) {

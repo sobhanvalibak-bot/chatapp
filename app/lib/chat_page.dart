@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
@@ -6,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'api.dart';
+import 'attach_sheet.dart';
+import 'msg_menu.dart';
 import 'file_widgets.dart';
 import 'permissions_page.dart';
 import 'player.dart';
@@ -17,6 +20,7 @@ class _Pending {
   final String name;
   final int size;
   double progress = 0;
+  bool started = false; // false = تو صف انتظار
   final UploadCancel cancel = UploadCancel();
   _Pending(this.name, this.size);
 }
@@ -35,11 +39,13 @@ class _ChatPageState extends State<ChatPage> {
   final _ctrl = TextEditingController();
   final _sc = ScrollController();
   final Map<int, GlobalKey> _keys = {};
+  final Map<int, GlobalKey> _bubKeys = {};
   StreamSubscription? _sub;
   bool _loading = true;
   String? _error;
   late Map<String, dynamic> _peer;
   Map<String, dynamic>? _editing;
+  Map<String, dynamic>? _replying; // پیامی که داریم بهش ریپلای می‌کنیم
   final List<_Pending> _pending = [];
   int _pinIdx = -1; // اندیس پیام پینی که الان تو بنر نشون داده میشه (-1 = آخری)
 
@@ -75,6 +81,7 @@ class _ChatPageState extends State<ChatPage> {
         break;
       case 'edit':
       case 'pin':
+      case 'react':
         final m2 = Map<String, dynamic>.from(e['message'] as Map);
         if (_inThisChat(m2)) _replace(m2);
         break;
@@ -178,19 +185,25 @@ class _ChatPageState extends State<ChatPage> {
       return;
     }
 
+    final rp = _replying;
     _ctrl.clear();
+    setState(() => _replying = null);
     try {
-      final m = await Api.send(widget.peerId, t);
+      final m = await Api.send(widget.peerId, t, replyTo: rp?['id'] as int?);
       _add(m);
     } on ApiException catch (e) {
       if (!mounted) return;
       _ctrl.text = t;
+      setState(() => _replying = rp);
       _snack(e.message);
     }
   }
 
   // ---- ارسال فایل (تا ۳۰ مگابایت) ----
   List<Map<String, dynamic>> get _audioQueue => _msgs.where((m) => fileKind(m) == 'audio').toList();
+  List<Map<String, dynamic>> get _imageQueue => _msgs
+      .where((m) => fileKind(m) == 'image' && ((fileOf(m)!['size'] as num).toInt() <= kInlineImageMax))
+      .toList();
 
   Future<void> _attach() async {
     // اولین بار در هر اجرا، اگه مجوزی داده نشده، صفحه‌ی مجوزها رو نشون بده
@@ -202,82 +215,63 @@ class _ChatPageState extends State<ChatPage> {
       }
     }
     if (!mounted) return;
-    showCupertinoModalPopup(
-      context: context,
-      builder: (ctx) => CupertinoActionSheet(
-        title: const Text('Send a file (max 30 MB)'),
-        actions: [
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _pick(FileType.media);
-            },
-            child: const Text('Photo or video'),
-          ),
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _pick(FileType.audio);
-            },
-            child: const Text('Music'),
-          ),
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _pick(FileType.any);
-            },
-            child: const Text('File'),
-          ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Cancel'),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _pick(FileType type) async {
-    FilePickerResult? r;
-    try {
-      r = await FilePicker.platform.pickFiles(type: type, allowMultiple: false, withData: false);
-    } catch (_) {
-      _snack('Could not open the file picker');
-      return;
+    FocusScope.of(context).unfocus();
+    final picked = await showAttachSheet(context, maxCount: _maxBatch);
+    if (picked == null || picked.isEmpty || !mounted) return;
+    final items = <AttachItem>[];
+    for (final f in picked) {
+      if (f.size > Api.maxFileBytes) {
+        _snack('"${f.name}" is too large (max 30 MB)');
+        continue;
+      }
+      if (f.size == 0) {
+        _snack('"${f.name}" is empty');
+        continue;
+      }
+      items.add(f);
     }
-    if (r == null || r.files.isEmpty) return;
-    final f = r.files.single;
-    final path = f.path;
-    if (path == null) {
-      _snack('Could not read the file');
-      return;
-    }
-    if (f.size > Api.maxFileBytes) {
-      _snack('File is too large (max 30 MB)');
-      return;
-    }
-    if (f.size == 0) {
-      _snack('The file is empty');
-      return;
-    }
-    // متنی که تو کادر نوشته شده میشه کپشن فایل
+    if (items.isEmpty) return;
+    if (items.length > _maxBatch) items.removeRange(_maxBatch, items.length);
+    // متنی که تو کادر نوشته شده میشه کپشن اولین فایل
     var caption = '';
     if (_editing == null) {
       caption = _ctrl.text.trim();
       if (caption.isNotEmpty) _ctrl.clear();
     }
-    await _upload(f.name, path, f.size, caption);
+    await _uploadAll(items, caption);
   }
 
-  Future<void> _upload(String name, String path, int size, String caption) async {
-    final p = _Pending(name, size);
-    setState(() => _pending.add(p));
+  static const int _maxBatch = 10;
+
+  /// همه‌ی فایل‌ها یکجا تو صف میان (با حباب «Waiting…») و پشت‌سرهم آپلود میشن
+  Future<void> _uploadAll(List<AttachItem> items, String caption) async {
+    final rp = _replying;
+    if (rp != null && mounted) setState(() => _replying = null);
+    final pendings = items.map((i) => _Pending(i.name, i.size)).toList();
+    setState(() => _pending.addAll(pendings));
+    for (var i = 0; i < items.length; i++) {
+      final p = pendings[i];
+      if (!mounted) break;
+      if (p.cancel.cancelled) {
+        setState(() => _pending.remove(p));
+        continue;
+      }
+      await _upload(items[i], p, i == 0 ? caption : '', i == 0 ? rp?['id'] as int? : null);
+    }
+    try {
+      await FilePicker.platform.clearTemporaryFiles();
+    } catch (_) {}
+  }
+
+  Future<void> _upload(AttachItem it, _Pending p, String caption, int? replyTo) async {
+    if (mounted) setState(() => p.started = true);
     try {
       final m = await Api.sendFile(
         widget.peerId,
-        path,
-        name,
+        it.path,
+        it.name,
         caption: caption,
+        replyTo: replyTo,
         cancel: p.cancel,
         onProgress: (v) {
           if (mounted && ((v - p.progress) >= 0.01 || v >= 1)) setState(() => p.progress = v);
@@ -289,14 +283,14 @@ class _ChatPageState extends State<ChatPage> {
       if (caption.isNotEmpty && _ctrl.text.isEmpty && mounted) _ctrl.text = caption;
     } finally {
       if (mounted) setState(() => _pending.remove(p));
-      try {
-        await FilePicker.platform.clearTemporaryFiles();
-      } catch (_) {}
     }
   }
 
   void _startEdit(Map<String, dynamic> m) {
-    setState(() => _editing = m);
+    setState(() {
+      _editing = m;
+      _replying = null;
+    });
     _ctrl.text = m['text'] as String;
     _ctrl.selection = TextSelection.collapsed(offset: _ctrl.text.length);
   }
@@ -357,49 +351,52 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  void _menu(Map<String, dynamic> m) {
+  void _startReply(Map<String, dynamic> m) {
+    setState(() {
+      _editing = null;
+      _replying = m;
+    });
+  }
+
+  Future<void> _react(Map<String, dynamic> m, String emoji) async {
     HapticFeedback.selectionClick();
-    showCupertinoModalPopup(
-      context: context,
-      builder: (ctx) => CupertinoActionSheet(
-        actions: [
-          if (((m['text'] as String?) ?? '').isNotEmpty)
-            CupertinoActionSheetAction(
-              onPressed: () {
-                Navigator.pop(ctx);
-                Clipboard.setData(ClipboardData(text: m['text'] as String));
-              },
-              child: const Text('Copy'),
-            ),
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _togglePin(m);
-            },
-            child: Text(m['pinned'] == true ? 'Unpin' : 'Pin'),
-          ),
-          if (_mineMsg(m) && m['file'] == null)
-            CupertinoActionSheetAction(
-              onPressed: () {
-                Navigator.pop(ctx);
-                _startEdit(m);
-              },
-              child: const Text('Edit'),
-            ),
-          CupertinoActionSheetAction(
-            isDestructiveAction: true,
-            onPressed: () {
-              Navigator.pop(ctx);
-              _deleteMenu(m);
-            },
-            child: const Text('Delete'),
-          ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Cancel'),
-        ),
-      ),
+    try {
+      final out = await Api.reactMessage(m['id'] as int, emoji);
+      _replace(out);
+    } on ApiException catch (e) {
+      _snack(e.message);
+    }
+  }
+
+  String? _myReaction(Map<String, dynamic> m) {
+    final r = m['reactions'];
+    if (r is Map) return r['${Api.userId}'] as String?;
+    return null;
+  }
+
+  void _menu(Map<String, dynamic> m) {
+    final box = _bubKeys[m['id'] as int]?.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.attached) return;
+    HapticFeedback.mediumImpact();
+    final rect = box.localToGlobal(Offset.zero) & box.size;
+    showMsgMenu(
+      context,
+      rect: rect,
+      mine: _mineMsg(m),
+      bubble: _bubbleBox(m),
+      myReaction: _myReaction(m),
+      onReact: (e) => _react(m, e),
+      actions: [
+        MsgMenuAction('Reply', CupertinoIcons.reply, () => _startReply(m)),
+        if (((m['text'] as String?) ?? '').isNotEmpty)
+          MsgMenuAction('Copy', CupertinoIcons.doc_on_doc, () {
+            Clipboard.setData(ClipboardData(text: m['text'] as String));
+          }),
+        MsgMenuAction(m['pinned'] == true ? 'Unpin' : 'Pin',
+            m['pinned'] == true ? CupertinoIcons.pin_slash : CupertinoIcons.pin, () => _togglePin(m)),
+        if (_mineMsg(m) && m['file'] == null) MsgMenuAction('Edit', CupertinoIcons.pencil, () => _startEdit(m)),
+        MsgMenuAction('Delete', CupertinoIcons.trash, () => _deleteMenu(m), destructive: true),
+      ],
     );
   }
 
@@ -478,67 +475,194 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _bubble(Map<String, dynamic> m) {
     final mine = _mineMsg(m);
+    final key = _keys.putIfAbsent(m['id'] as int, () => GlobalKey());
+    final bk = _bubKeys.putIfAbsent(m['id'] as int, () => GlobalKey());
+    return Align(
+      key: key,
+      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 10),
+        child: GestureDetector(
+          onLongPress: () => _menu(m),
+          child: _bubbleBox(m, key: bk),
+        ),
+      ),
+    );
+  }
+
+  /// خود حباب (بدون margin)؛ هم تو لیست استفاده میشه هم تو منوی نگه‌داشتن
+  Widget _bubbleBox(Map<String, dynamic> m, {Key? key}) {
+    final mine = _mineMsg(m);
     final text = (m['text'] as String?) ?? '';
     final hasFile = m['file'] != null;
     final read = m['read'] == true;
     const r = Radius.circular(18);
     const tail = Radius.circular(4);
     final metaColor = mine ? context.metaMine : context.metaOther;
-    final key = _keys.putIfAbsent(m['id'] as int, () => GlobalKey());
-    return Align(
+    return Container(
       key: key,
-      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: GestureDetector(
-        onLongPress: () => _menu(m),
-        child: Container(
-          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
-          margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 10),
-          padding: const EdgeInsets.fromLTRB(12, 7, 12, 5),
-          decoration: BoxDecoration(
-            color: mine ? context.bubbleMine : context.bubbleOther,
-            borderRadius: BorderRadius.only(
-              topLeft: r,
-              topRight: r,
-              bottomLeft: mine ? r : tail,
-              bottomRight: mine ? tail : r,
+      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
+      padding: const EdgeInsets.fromLTRB(12, 7, 12, 5),
+      decoration: BoxDecoration(
+        color: mine ? context.bubbleMine : context.bubbleOther,
+        borderRadius: BorderRadius.only(
+          topLeft: r,
+          topRight: r,
+          bottomLeft: mine ? r : tail,
+          bottomRight: mine ? tail : r,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (m['reply'] is Map) _replyQuote(m['reply'] as Map, mine),
+          if (hasFile)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FileContent(msg: m, mine: mine, audioQueue: _audioQueue, imageQueue: _imageQueue),
             ),
+          if (hasFile && text.isNotEmpty) const SizedBox(height: 6),
+          if (text.isNotEmpty)
+            Align(
+              alignment: dirOf(text) == TextDirection.rtl ? Alignment.centerRight : Alignment.centerLeft,
+              child: Text(text, textDirection: dirOf(text), style: const TextStyle(fontSize: 16, height: 1.3)),
+            ),
+          _reactionChips(m),
+          const SizedBox(height: 2),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (m['pinned'] == true) ...[
+                Icon(Icons.push_pin, size: 12, color: metaColor),
+                const SizedBox(width: 3),
+              ],
+              if (m['edited'] == true) ...[
+                Text('edited', style: TextStyle(fontSize: 11, color: metaColor)),
+                const SizedBox(width: 4),
+              ],
+              Text(fmtHm(m['createdAt'] as int), style: TextStyle(fontSize: 11, color: metaColor)),
+              if (mine) ...[
+                const SizedBox(width: 3),
+                Icon(read ? Icons.done_all : Icons.done, size: 15, color: read ? context.tickRead : metaColor),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// کادر نقل‌قول بالای پیام ریپلای‌شده
+  Widget _replyQuote(Map reply, bool mine) {
+    final text = ((reply['text'] as String?) ?? '').replaceAll('\n', ' ');
+    final from = reply['from'];
+    final name = from == null
+        ? ''
+        : (from == Api.userId ? 'You' : ((_peer['username'] as String?) ?? widget.peerName));
+    final accent = mine ? context.tickRead : tgBlue;
+    final id = reply['id'];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: GestureDetector(
+        onTap: id is int && from != null ? () => _jumpTo(id) : null,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(8, 4, 10, 4),
+          decoration: BoxDecoration(
+            color: accent.withOpacity(0.14),
+            borderRadius: BorderRadius.circular(8),
+            border: Border(left: BorderSide(color: accent, width: 3)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (hasFile)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: FileContent(msg: m, mine: mine, audioQueue: _audioQueue),
-                ),
-              if (hasFile && text.isNotEmpty) const SizedBox(height: 6),
-              if (text.isNotEmpty)
-                Align(
-                  alignment: dirOf(text) == TextDirection.rtl ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Text(text, textDirection: dirOf(text), style: const TextStyle(fontSize: 16, height: 1.3)),
-                ),
-              const SizedBox(height: 2),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (m['pinned'] == true) ...[
-                    Icon(Icons.push_pin, size: 12, color: metaColor),
-                    const SizedBox(width: 3),
-                  ],
-                  if (m['edited'] == true) ...[
-                    Text('edited', style: TextStyle(fontSize: 11, color: metaColor)),
-                    const SizedBox(width: 4),
-                  ],
-                  Text(fmtHm(m['createdAt'] as int), style: TextStyle(fontSize: 11, color: metaColor)),
-                  if (mine) ...[
-                    const SizedBox(width: 3),
-                    Icon(read ? Icons.done_all : Icons.done,
-                        size: 15, color: read ? context.tickRead : metaColor),
-                  ],
-                ],
-              ),
+              if (name.isNotEmpty)
+                Text(name, style: TextStyle(color: accent, fontSize: 13, fontWeight: FontWeight.w600)),
+              Text(text,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textDirection: dirOf(text),
+                  style: TextStyle(fontSize: 13.5, color: from == null ? context.subText : null)),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// ری‌اکشن‌های زیر پیام؛ زدن روی هر کدوم، ری‌اکشن خودم رو عوض/برمی‌داره
+  Widget _reactionChips(Map<String, dynamic> m) {
+    final rs = m['reactions'];
+    if (rs is! Map || rs.isEmpty) return const SizedBox.shrink();
+    final counts = <String, int>{};
+    rs.forEach((_, e) {
+      if (e is String) counts[e] = (counts[e] ?? 0) + 1;
+    });
+    final mineE = _myReaction(m);
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Wrap(
+          spacing: 5,
+          runSpacing: 4,
+          children: counts.entries.map((en) {
+            final on = mineE == en.key;
+            return GestureDetector(
+              onTap: () => _react(m, en.key),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: on ? tgBlue.withOpacity(0.45) : Colors.black.withOpacity(context.dark ? 0.25 : 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(en.key, style: const TextStyle(fontSize: 15)),
+                    if (en.value > 1) ...[
+                      const SizedBox(width: 3),
+                      Text('${en.value}', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  String _dayKey(Map m) {
+    final d = DateTime.fromMillisecondsSinceEpoch(m['createdAt'] as int);
+    return '${d.year}-${d.month}-${d.day}';
+  }
+
+  Widget _dayChip(Map m) {
+    final d = DateTime.fromMillisecondsSinceEpoch(m['createdAt'] as int);
+    final now = DateTime.now();
+    final diff = DateTime(now.year, now.month, now.day).difference(DateTime(d.year, d.month, d.day)).inDays;
+    const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final label = diff == 0
+        ? 'Today'
+        : diff == 1
+            ? 'Yesterday'
+            : '${mon[d.month - 1]} ${d.day}${d.year != now.year ? ', ${d.year}' : ''}';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            color: Colors.black.withOpacity(context.dark ? 0.35 : 0.14),
+            child: Text(label,
+                style: TextStyle(
+                    fontSize: 12.5, fontWeight: FontWeight.w600, color: context.dark ? Colors.white70 : Colors.black54)),
           ),
         ),
       ),
@@ -566,7 +690,10 @@ class _ChatPageState extends State<ChatPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             GestureDetector(
-              onTap: p.cancel.cancel,
+              onTap: () {
+                p.cancel.cancel();
+                if (!p.started && mounted) setState(() => _pending.remove(p));
+              },
               child: Container(
                 width: 44,
                 height: 44,
@@ -600,7 +727,7 @@ class _ChatPageState extends State<ChatPage> {
                       textDirection: dirOf(p.name),
                       style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
-                  Text('Sending… $pct% • ${fmtSize(p.size)}',
+                  Text(p.started ? 'Sending… $pct% • ${fmtSize(p.size)}' : 'Waiting… • ${fmtSize(p.size)}',
                       style: TextStyle(fontSize: 12.5, color: context.metaMine)),
                 ],
               ),
@@ -641,7 +768,11 @@ class _ChatPageState extends State<ChatPage> {
       itemCount: _msgs.length + _pending.length,
       itemBuilder: (_, i) {
         if (i < _pending.length) return _pendingBubble(_pending[_pending.length - 1 - i]);
-        return _bubble(_msgs[_msgs.length - 1 - (i - _pending.length)]);
+        final idx = _msgs.length - 1 - (i - _pending.length);
+        final m = _msgs[idx];
+        final showDay = idx == 0 || _dayKey(_msgs[idx - 1]) != _dayKey(m);
+        if (!showDay) return _bubble(m);
+        return Column(children: [_dayChip(m), _bubble(m)]);
       },
     );
   }
@@ -677,35 +808,99 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  Widget _inputBar() {
+  Widget _replyBar() {
+    final rp = _replying;
+    if (rp == null) return const SizedBox.shrink();
+    final text = msgPreview(rp).replaceAll('\n', ' ');
+    final name = _mineMsg(rp) ? 'You' : ((_peer['username'] as String?) ?? widget.peerName);
     return Container(
       color: context.barBg,
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-      child: SafeArea(
-        top: false,
+      padding: const EdgeInsets.fromLTRB(14, 8, 6, 0),
+      child: Row(
+        children: [
+          const Icon(CupertinoIcons.reply, size: 20, color: tgBlue),
+          const SizedBox(width: 10),
+          Container(width: 3, height: 34, decoration: BoxDecoration(color: tgBlue, borderRadius: BorderRadius.circular(2))),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Reply to $name',
+                    style: const TextStyle(color: tgBlue, fontSize: 13, fontWeight: FontWeight.w600)),
+                Text(text,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textDirection: dirOf(text),
+                    style: TextStyle(fontSize: 13.5, color: context.subText)),
+              ],
+            ),
+          ),
+          IconButton(icon: const Icon(Icons.close, size: 20), onPressed: () => setState(() => _replying = null)),
+        ],
+      ),
+    );
+  }
+
+  Widget _glassCircle({required Widget child, VoidCallback? onTap, Color? color}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: ClipOval(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color ?? (context.dark ? const Color(0xAA1C2733) : const Color(0xCCFFFFFF)),
+              border: Border.all(color: context.dark ? Colors.white12 : Colors.black12, width: 0.8),
+            ),
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _inputBar() {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            IconButton(
-              icon: Icon(Icons.attach_file_rounded, color: context.subText),
-              onPressed: _attach,
-              tooltip: 'Attach',
+            _glassCircle(
+              onTap: _attach,
+              child: Icon(Icons.attach_file_rounded, color: context.subText, size: 23),
             ),
+            const SizedBox(width: 8),
             Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: context.fieldFill,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: TextField(
-                  controller: _ctrl,
-                  minLines: 1,
-                  maxLines: 5,
-                  keyboardType: TextInputType.multiline,
-                  decoration: const InputDecoration(
-                    hintText: 'Message',
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(22),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 44),
+                    decoration: BoxDecoration(
+                      color: context.dark ? const Color(0xAA1C2733) : const Color(0xCCFFFFFF),
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(color: context.dark ? Colors.white12 : Colors.black12, width: 0.8),
+                    ),
+                    child: TextField(
+                      controller: _ctrl,
+                      minLines: 1,
+                      maxLines: 5,
+                      keyboardType: TextInputType.multiline,
+                      decoration: const InputDecoration(
+                        hintText: 'Message',
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -715,21 +910,13 @@ class _ChatPageState extends State<ChatPage> {
               valueListenable: _ctrl,
               builder: (_, v, __) {
                 final can = v.text.trim().isNotEmpty;
-                return GestureDetector(
+                return _glassCircle(
                   onTap: can ? _send : null,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: can ? tgBlue : (context.dark ? const Color(0xFF2B3948) : Colors.grey.shade300),
-                    ),
-                    child: Icon(
-                      _editing != null ? Icons.check : CupertinoIcons.arrow_up,
-                      color: Colors.white,
-                      size: 22,
-                    ),
+                  color: can ? tgBlue : null,
+                  child: Icon(
+                    _editing != null ? Icons.check : CupertinoIcons.arrow_up,
+                    color: can ? Colors.white : context.subText,
+                    size: 22,
                   ),
                 );
               },
@@ -746,6 +933,12 @@ class _ChatPageState extends State<ChatPage> {
     return Scaffold(
       backgroundColor: context.chatBg,
       appBar: AppBar(
+        backgroundColor: context.barBg.withOpacity(0.78),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20), child: const SizedBox.expand()),
+        ),
         centerTitle: false,
         titleSpacing: 0,
         title: InkWell(
@@ -783,14 +976,26 @@ class _ChatPageState extends State<ChatPage> {
           ),
         ),
       ),
-      body: Column(
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: context.dark
+                ? const [Color(0xFF0E1621), Color(0xFF131B2E), Color(0xFF1A1530)]
+                : const [Color(0xFFE7EBF0), Color(0xFFE3E9F4), Color(0xFFEBE3F0)],
+          ),
+        ),
+        child: Column(
         children: [
           _pinBanner(),
           const MiniPlayer(),
           Expanded(child: _list()),
           _editBar(),
+          _replyBar(),
           _inputBar(),
         ],
+      ),
       ),
     );
   }

@@ -2,7 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import 'api.dart';
-import 'home_page.dart';
+import 'main_shell.dart';
 import 'utils.dart';
 
 /// دیالوگ تغییر آدرس سرور (برای زمانی که سرور از Termux به هاست منتقل شد)
@@ -91,7 +91,7 @@ class _LoginPageState extends State<LoginPage> {
       await Api.auth(_register ? '/register' : '/login', u, p);
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomePage()),
+        MaterialPageRoute(builder: (_) => const MainShell()),
         (r) => false,
       );
     } on ApiException catch (e) {
