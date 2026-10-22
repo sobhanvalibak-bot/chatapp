@@ -126,6 +126,20 @@ jobs:
           GRADLE
           cat "$HOME/.gradle/init.d/force-compile-sdk.gradle"
 
+      - name: Pre-install CMake (the jni plugin needs it; Gradle's auto-download is flaky)
+        run: |
+          SDKM=$(ls $ANDROID_HOME/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort -V | tail -1)
+          [ -z "$SDKM" ] && SDKM=$(which sdkmanager)
+          for i in 1 2 3 4; do
+            rm -rf "$ANDROID_HOME/cmake/3.22.1" "$ANDROID_HOME/.temp" 2>/dev/null || true
+            yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+            if "$SDKM" --install "cmake;3.22.1" && [ -x "$ANDROID_HOME/cmake/3.22.1/bin/cmake" ]; then
+              echo "CMake installed"; break
+            fi
+            echo "attempt $i failed, retrying in 15s..."; sleep 15
+          done
+          ls "$ANDROID_HOME/cmake" || { echo "ERROR: CMake install failed"; exit 1; }
+
       - name: Build release APK
         working-directory: app
         run: |
