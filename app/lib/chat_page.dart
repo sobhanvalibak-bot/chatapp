@@ -256,7 +256,7 @@ class _ChatPageState extends State<ChatPage> {
         setState(() => _pending.remove(p));
         continue;
       }
-      await _upload(items[i], p, i == 0 ? caption : '', i == 0 ? rp?['id'] as int? : null);
+      await _upload(items[i], p, i == 0 ? caption : '', i == 0 ? (rp?['id'] as int?) : null);
     }
     try {
       await FilePicker.platform.clearTemporaryFiles();
