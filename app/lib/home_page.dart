@@ -146,7 +146,9 @@ class _HomePageState extends State<HomePage> {
     final last = c['last'] as Map<String, dynamic>;
     final unread = c['unread'] as int;
     final mine = last['from'] == Api.userId;
-    final text = msgPreview(last).replaceAll('\n', ' ');
+    final thumb = previewThumb(last, size: 20);
+    // وقتی پیش‌نمایش عکس/فریم ویدیو داریم، به جای ایموجی همون رو نشون میدیم
+    final text = msgPreview(last, icon: thumb == null).replaceAll('\n', ' ');
     return InkWell(
       onTap: () => _open(peer['id'] as int, peer['username'] as String),
       child: Padding(
@@ -190,8 +192,17 @@ class _HomePageState extends State<HomePage> {
                   Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          mine ? 'You: $text' : text,
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              if (mine) const TextSpan(text: 'You: '),
+                              if (thumb != null) ...[
+                                WidgetSpan(alignment: PlaceholderAlignment.middle, child: thumb),
+                                const TextSpan(text: ' '),
+                              ],
+                              TextSpan(text: text),
+                            ],
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           textDirection: dirOf(text),

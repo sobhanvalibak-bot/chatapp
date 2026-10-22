@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ui';
 
 import 'package:file_picker/file_picker.dart';
@@ -14,7 +15,11 @@ class AttachItem {
   final String name;
   final String path;
   final int size;
-  AttachItem(this.name, this.path, this.size);
+  /// ویدیوی بی‌صدا شده → به‌صورت گیف فرستاده میشه
+  final bool gif;
+  /// پیش‌نمایش ریز (base64 JPEG) برای لیست گفتگوها
+  final String? thumb;
+  AttachItem(this.name, this.path, this.size, {this.gif = false, this.thumb});
 }
 
 /// نتیجه‌ی شیت: لیست فایل‌های انتخاب‌شده (یا null اگه بسته شد)
@@ -41,7 +46,12 @@ class _AttachSheet extends StatefulWidget {
 class _AttachSheetState extends State<_AttachSheet> {
   _Tab _tab = _Tab.gallery;
   final List<AssetEntity> _selected = [];
+  final Set<String> _muted = {}; // id ویدیوهایی که «بی‌صدا» (گیف) شدن
   bool _busy = false;
+
+  void _toggleMute(AssetEntity a) => setState(() {
+        if (!_muted.remove(a.id)) _muted.add(a.id);
+      });
 
   Color get _bg => context.dark ? const Color(0xFF111111) : const Color(0xFFF7F7F9);
 
@@ -49,6 +59,7 @@ class _AttachSheetState extends State<_AttachSheet> {
     setState(() {
       if (_selected.contains(a)) {
         _selected.remove(a);
+        _muted.remove(a.id);
       } else if (_selected.length >= widget.maxCount) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('You can send up to ${widget.maxCount} files at once')));
       } else {
@@ -68,7 +79,17 @@ class _AttachSheetState extends State<_AttachSheet> {
         final size = await f.length();
         var name = await a.titleAsync;
         if (name.isEmpty) name = f.path.split('/').last;
-        out.add(AttachItem(name, f.path, size));
+        String? thumb;
+        if (a.type == AssetType.image || a.type == AssetType.video) {
+          try {
+            final d = await a.thumbnailDataWithSize(const ThumbnailSize(64, 64), quality: 55);
+            if (d != null) {
+              final b = base64Encode(d);
+              if (b.length <= 11000) thumb = b;
+            }
+          } catch (_) {}
+        }
+        out.add(AttachItem(name, f.path, size, gif: a.type == AssetType.video && _muted.contains(a.id), thumb: thumb));
       } catch (_) {}
     }
     if (!mounted) return;
@@ -130,6 +151,8 @@ class _AttachSheetState extends State<_AttachSheet> {
                             controller: sc,
                             selected: _selected,
                             onToggle: _toggle,
+                            muted: _muted,
+                            onToggleMute: _toggleMute,
                             bottomPad: 100 + bottomInset,
                           ),
                         _Tab.music => _AudioList(
@@ -318,6 +341,8 @@ class _AssetGrid extends StatefulWidget {
   final ScrollController controller;
   final List<AssetEntity> selected;
   final void Function(AssetEntity) onToggle;
+  final Set<String> muted;
+  final void Function(AssetEntity) onToggleMute;
   final double bottomPad;
   const _AssetGrid(
       {super.key,
@@ -325,6 +350,8 @@ class _AssetGrid extends StatefulWidget {
       required this.controller,
       required this.selected,
       required this.onToggle,
+      required this.muted,
+      required this.onToggleMute,
       required this.bottomPad});
 
   @override
@@ -403,10 +430,37 @@ class _AssetGridState extends State<_AssetGrid> {
                   ),
                 ),
               Positioned(top: 6, right: 6, child: _check(on, idx + 1)),
+              // ویدیوی انتخاب‌شده: دکمه‌ی بی‌صدا (گیف)
+              if (on && a.type == AssetType.video) Positioned(right: 6, bottom: 6, child: _mutePill(a)),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _mutePill(AssetEntity a) {
+    final m = widget.muted.contains(a.id);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => widget.onToggleMute(a),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: m ? tgBlue : Colors.black54,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(m ? Icons.volume_off_rounded : Icons.volume_up_rounded, color: Colors.white, size: 15),
+            const SizedBox(width: 4),
+            Text(m ? 'GIF' : 'Mute',
+                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+          ],
+        ),
+      ),
     );
   }
 }

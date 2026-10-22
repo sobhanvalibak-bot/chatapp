@@ -422,7 +422,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _mediaTile(Map<String, dynamic> m, List<Map<String, dynamic>> images) {
     final f = fileOf(m)!;
-    if (f['kind'] == 'video') {
+    if (f['kind'] == 'video' || f['kind'] == 'gif') {
       return GestureDetector(
         onTap: () => openVideo(context, m),
         child: Container(
@@ -529,7 +529,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   List<Widget> _sharedSlivers() {
-    final media = _ofKind({'image', 'video'});
+    final media = _ofKind({'image', 'video', 'gif'});
     final music = _ofKind({'audio'});
     final files = _ofKind({'file'});
     if (media.isEmpty && music.isEmpty && files.isEmpty) return [];

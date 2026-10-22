@@ -7,6 +7,7 @@ import 'package:open_filex/open_filex.dart';
 
 import 'api.dart';
 import 'attheme.dart';
+import 'gif_widgets.dart';
 import 'media_viewer.dart';
 import 'player.dart';
 import 'utils.dart';
@@ -17,7 +18,7 @@ const int kInlineImageMax = 5 * 1024 * 1024;
 
 IconData _iconFor(Map<String, dynamic> f) {
   final name = ((f['name'] as String?) ?? '').toLowerCase();
-  if (f['kind'] == 'video') return Icons.movie_rounded;
+  if (f['kind'] == 'video' || f['kind'] == 'gif') return Icons.movie_rounded;
   if (name.endsWith('.pdf')) return Icons.picture_as_pdf_rounded;
   if (RegExp(r'\.(zip|rar|7z|tar|gz)$').hasMatch(name)) return Icons.folder_zip_rounded;
   if (RegExp(r'\.(doc|docx|txt|rtf|odt)$').hasMatch(name)) return Icons.description_rounded;
@@ -375,6 +376,8 @@ class _FileContentState extends State<FileContent> {
         return RoundVideoBubble(msg: widget.msg, size: w);
       case 'video':
         return VideoThumb(msg: widget.msg, width: w);
+      case 'gif':
+        return GifBubble(msg: widget.msg, width: w);
       default:
         return _card(w);
     }

@@ -565,9 +565,10 @@ class Api {
     int? replyTo,
     void Function(double)? onProgress,
     UploadCancel? cancel,
-    String? mediaKind, // 'voice' | 'round' (ضبط‌شده داخل اپ)
+    String? mediaKind, // 'voice' | 'round' | 'gif'
     int? durationMs,
     String? waveform, // base64
+    String? thumb, // base64 JPEG ریز برای پیش‌نمایش
   }) =>
       _postFile('/messages/$peer/file', path, name,
           caption: caption,
@@ -576,7 +577,22 @@ class Api {
           cancel: cancel,
           mediaKind: mediaKind,
           durationMs: durationMs,
-          waveform: waveform);
+          waveform: waveform,
+          thumb: thumb);
+
+  // ---- گیف‌های من ----
+  static Future<List<Map<String, dynamic>>> gifs() async => _list(await _req('GET', '/me/gifs'));
+
+  /// گیف یه پیام رو به گیف‌های من اضافه میکنه؛ true = تازه اضافه شد، false = از قبل بود
+  static Future<bool> addGif(int messageId) async {
+    final r = _map(await _req('POST', '/me/gifs', body: {'messageId': messageId}));
+    return r['added'] == true;
+  }
+
+  static Future<void> deleteGif(String id) async => _req('DELETE', '/me/gifs/$id');
+
+  static Future<Map<String, dynamic>> sendGif(int peer, String gifId, {int? replyTo}) async =>
+      _map(await _req('POST', '/messages/$peer/gif', body: {'gifId': gifId, if (replyTo != null) 'replyTo': replyTo}));
 
   static Future<Map<String, dynamic>> _postFile(
     String urlPath,
@@ -589,6 +605,7 @@ class Api {
     String? mediaKind,
     int? durationMs,
     String? waveform,
+    String? thumb,
   }) async {
     if (cancel?.cancelled == true) throw ApiException('Upload cancelled');
     final file = File(path);
@@ -607,6 +624,7 @@ class Api {
       if (mediaKind != null) rq.headers.set('x-media-kind', mediaKind);
       if (durationMs != null) rq.headers.set('x-duration', durationMs.toString());
       if (waveform != null && waveform.isNotEmpty) rq.headers.set('x-waveform', waveform);
+      if (thumb != null && thumb.isNotEmpty) rq.headers.set('x-thumb', thumb);
       rq.contentLength = len;
       var sent = 0;
       await for (final chunk in file.openRead()) {

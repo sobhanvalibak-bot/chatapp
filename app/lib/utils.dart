@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import 'api.dart';
@@ -242,8 +245,70 @@ Duration? audioDuration(Map m) {
   return d is num && d > 0 ? Duration(milliseconds: d.toInt()) : null;
 }
 
+/// گیف؟ (ویدیوی بی‌صدا یا فایل image/gif)
+bool isGifMsg(Map m) {
+  final f = fileOf(m);
+  if (f == null) return false;
+  return f['kind'] == 'gif' || (f['kind'] == 'image' && f['mime'] == 'image/gif');
+}
+
+final Map<String, Uint8List> _thumbCache = {};
+
+/// پیش‌نمایش ریزِ عکس/ویدیو/گیف به اندازه‌ی یه ایموجی (برای لیست گفتگوها).
+/// برای ویدیو همون فریم اول رو نشون میده. اگه چیزی برای نمایش نباشه null برمیگردونه.
+Widget? previewThumb(Map m, {double size = 20}) {
+  final f = fileOf(m);
+  if (f == null) return null;
+  final kind = f['kind'];
+  if (kind != 'image' && kind != 'video' && kind != 'gif') return null;
+  Widget? img;
+  final t = f['thumb'];
+  if (t is String && t.isNotEmpty) {
+    try {
+      final bytes = _thumbCache.putIfAbsent(t, () => base64Decode(t));
+      if (_thumbCache.length > 300) _thumbCache.remove(_thumbCache.keys.first);
+      img = Image.memory(bytes, width: size, height: size, fit: BoxFit.cover, gaplessPlayback: true);
+    } catch (_) {}
+  }
+  // پیام‌های قدیمی (بدون thumb): عکس‌های کوچیک رو از سرور میگیره
+  if (img == null && kind == 'image' && ((f['size'] as num?) ?? 0) <= 5 * 1024 * 1024) {
+    img = Image.network(
+      Api.fileUrl(f),
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+      cacheWidth: (size * 3).round(),
+      errorBuilder: (_, __, ___) => SizedBox(width: size, height: size),
+    );
+  }
+  if (img == null) return null;
+  final play = kind != 'image';
+  return ClipRRect(
+    borderRadius: BorderRadius.circular(size * 0.22),
+    child: SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          img,
+          if (play)
+            Center(
+              child: Container(
+                decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+                padding: EdgeInsets.all(size * 0.08),
+                child: Icon(Icons.play_arrow_rounded, color: Colors.white, size: size * 0.5),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
 /// متن کوتاه یک پیام برای لیست گفتگوها / بنر پین
-String msgPreview(Map m) {
+/// icon=false → برای عکس/ویدیو/گیف فقط اسم («Photo») بدون ایموجی
+String msgPreview(Map m, {bool icon = true}) {
   final text = ((m['text'] as String?) ?? '').trim();
   final f = fileOf(m);
   if (f == null) return text;
@@ -261,10 +326,13 @@ String msgPreview(Map m) {
       label = '📹 Video message';
       break;
     case 'image':
-      label = '🖼 Photo';
+      label = f['mime'] == 'image/gif' ? '${icon ? '🎞 ' : ''}GIF' : '${icon ? '🖼 ' : ''}Photo';
       break;
     case 'video':
-      label = '🎬 Video';
+      label = '${icon ? '🎬 ' : ''}Video';
+      break;
+    case 'gif':
+      label = '${icon ? '🎞 ' : ''}GIF';
       break;
     default:
       label = '📎 ${f['name']}';

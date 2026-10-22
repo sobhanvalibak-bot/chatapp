@@ -13,6 +13,7 @@ import 'attheme.dart';
 import 'attach_sheet.dart';
 import 'msg_menu.dart';
 import 'file_widgets.dart';
+import 'gif_widgets.dart';
 import 'permissions_page.dart';
 import 'player.dart';
 import 'profile_page.dart';
@@ -54,6 +55,7 @@ class _ChatPageState extends State<ChatPage> {
   int _pinIdx = -1; // اندیس پیام پینی که الان تو بنر نشون داده میشه (-1 = آخری)
   final MsgRecorder _rec = MsgRecorder();
   final GlobalKey _actionKey = GlobalKey();
+  bool _gifOpen = false; // پنل گیف‌ها باز هست؟
 
   @override
   void initState() {
@@ -223,6 +225,7 @@ class _ChatPageState extends State<ChatPage> {
       }
     }
     if (!mounted) return;
+    if (_gifOpen) setState(() => _gifOpen = false);
     FocusScope.of(context).unfocus();
     final picked = await showAttachSheet(context, maxCount: _maxBatch);
     if (picked == null || picked.isEmpty || !mounted) return;
@@ -281,6 +284,8 @@ class _ChatPageState extends State<ChatPage> {
         caption: caption,
         replyTo: replyTo,
         cancel: p.cancel,
+        mediaKind: it.gif ? 'gif' : null,
+        thumb: it.thumb,
         onProgress: (v) {
           if (mounted && ((v - p.progress) >= 0.01 || v >= 1)) setState(() => p.progress = v);
         },
@@ -296,6 +301,7 @@ class _ChatPageState extends State<ChatPage> {
 
   // ---- ضبط ویس / ویدیو مسیج ----
   Future<void> _recStart() async {
+    if (_gifOpen) setState(() => _gifOpen = false);
     FocusScope.of(context).unfocus();
     final err = await _rec.start();
     if (!mounted) return;
@@ -378,6 +384,38 @@ class _ChatPageState extends State<ChatPage> {
       try {
         await f.delete();
       } catch (_) {}
+    }
+  }
+
+  // ---- گیف‌ها ----
+  void _toggleGifs() {
+    if (_gifOpen) {
+      setState(() => _gifOpen = false);
+    } else {
+      FocusScope.of(context).unfocus();
+      setState(() => _gifOpen = true);
+    }
+  }
+
+  Future<void> _sendGif(Map<String, dynamic> g) async {
+    HapticFeedback.selectionClick();
+    final rp = _replying;
+    if (rp != null && mounted) setState(() => _replying = null);
+    try {
+      final m = await Api.sendGif(widget.peerId, g['id'] as String, replyTo: rp?['id'] as int?);
+      _add(m);
+    } on ApiException catch (e) {
+      if (rp != null && mounted) setState(() => _replying = rp);
+      _snack(e.message);
+    }
+  }
+
+  Future<void> _addGif(Map<String, dynamic> m) async {
+    try {
+      final added = await Api.addGif(m['id'] as int);
+      _snack(added ? 'Added to your GIFs' : 'Already in your GIFs');
+    } on ApiException catch (e) {
+      _snack(e.message);
     }
   }
 
@@ -483,6 +521,7 @@ class _ChatPageState extends State<ChatPage> {
       onReact: (e) => _react(m, e),
       actions: [
         MsgMenuAction('Reply', CupertinoIcons.reply, () => _startReply(m)),
+        if (isGifMsg(m)) MsgMenuAction('Add to GIFs', Icons.gif_box_outlined, () => _addGif(m)),
         if (((m['text'] as String?) ?? '').isNotEmpty)
           MsgMenuAction('Copy', CupertinoIcons.doc_on_doc, () {
             Clipboard.setData(ClipboardData(text: m['text'] as String));
@@ -1102,6 +1141,7 @@ class _ChatPageState extends State<ChatPage> {
   Widget _inputBar() {
     return SafeArea(
       top: false,
+      bottom: !_gifOpen, // وقتی پنل گیف بازه، خودش فاصله‌ی پایین رو میگیره
       child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
         child: AnimatedBuilder(
@@ -1122,20 +1162,43 @@ class _ChatPageState extends State<ChatPage> {
                   child: recording
                       ? _pill(RecordingStrip(rec: _rec, onTrash: () => _finishRec(send: false)))
                       : _pill(
-                          TextField(
-                            controller: _ctrl,
-                            minLines: 1,
-                            maxLines: 5,
-                            keyboardType: TextInputType.multiline,
-                            style: const TextStyle(fontSize: 18),
-                            decoration: InputDecoration(
-                              hintText: 'Message',
-                              hintStyle: TextStyle(fontSize: 18, color: context.subText),
-                              border: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                            ),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _ctrl,
+                                  minLines: 1,
+                                  maxLines: 5,
+                                  keyboardType: TextInputType.multiline,
+                                  style: const TextStyle(fontSize: 18),
+                                  onTap: () {
+                                    if (_gifOpen) setState(() => _gifOpen = false);
+                                  },
+                                  decoration: InputDecoration(
+                                    hintText: 'Message',
+                                    hintStyle: TextStyle(fontSize: 18, color: context.subText),
+                                    border: InputBorder.none,
+                                    enabledBorder: InputBorder.none,
+                                    focusedBorder: InputBorder.none,
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                                  ),
+                                ),
+                              ),
+                              // دکمه‌ی گیف‌ها (کنار ویس)
+                              GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: _toggleGifs,
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(6, 10, 14, 10),
+                                  child: Icon(
+                                    _gifOpen ? CupertinoIcons.keyboard : Icons.gif_box_outlined,
+                                    color: context.subText,
+                                    size: 27,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                 ),
@@ -1158,7 +1221,12 @@ class _ChatPageState extends State<ChatPage> {
   @override
   Widget build(BuildContext context) {
     final online = _peer['online'] == true;
-    return Scaffold(
+    return PopScope(
+      canPop: !_gifOpen,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _gifOpen) setState(() => _gifOpen = false);
+      },
+      child: Scaffold(
       backgroundColor: context.chatBg,
       appBar: AppBar(
         backgroundColor: context.barBg.withOpacity(0.78),
@@ -1261,7 +1329,13 @@ class _ChatPageState extends State<ChatPage> {
           _editBar(),
           _replyBar(),
           _inputBar(),
+          if (_gifOpen)
+            GifPanel(
+              height: MediaQuery.of(context).size.height * 0.36,
+              onPick: _sendGif,
+            ),
         ],
+      ),
       ),
       ),
     );
