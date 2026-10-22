@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'api.dart';
+
 const tgBlue = Color(0xFF3390EC);
 
 const _avatarColors = [
@@ -13,6 +15,22 @@ const _avatarColors = [
 ];
 
 Color avatarColor(int id) => _avatarColors[id % _avatarColors.length];
+
+/// رنگ‌های سازگار با حالت روشن/تاریک
+extension Pal on BuildContext {
+  bool get dark => Theme.of(this).brightness == Brightness.dark;
+  Color get chatBg => dark ? const Color(0xFF0E1621) : const Color(0xFFE7EBF0);
+  Color get bubbleMine => dark ? const Color(0xFF2B5278) : const Color(0xFFEFFDDE);
+  Color get bubbleOther => dark ? const Color(0xFF182533) : Colors.white;
+  Color get fieldFill => dark ? const Color(0xFF242F3D) : const Color(0xFFF1F3F5);
+  Color get barBg => dark ? const Color(0xFF17212B) : Colors.white;
+  Color get subText => dark ? const Color(0xFF7F91A4) : Colors.grey;
+  Color get metaMine => dark ? const Color(0xFF7DA8D3) : const Color(0xFF5DAE55);
+  Color get metaOther => dark ? const Color(0xFF7F91A4) : Colors.grey;
+  Color get tickRead => dark ? const Color(0xFF6AB3F3) : const Color(0xFF3390EC);
+  Color get mainText => dark ? Colors.white : Colors.black;
+  Color get cardBg => dark ? const Color(0xFF17212B) : Colors.white;
+}
 
 /// جهت متن را از اولین حرف معنادار تشخیص می‌دهد (فارسی/عربی → راست‌به‌چپ)
 TextDirection dirOf(String s) {
@@ -50,14 +68,47 @@ String fmtTime(int ms) {
   return '${d.year}/${_two(d.month)}/${_two(d.day)}';
 }
 
+/// «online» یا «last seen ...»
+String presenceText(Map<String, dynamic> u) {
+  if (u['online'] == true) return 'online';
+  final ms = (u['lastSeen'] as num?)?.toInt() ?? 0;
+  if (ms <= 0) return 'last seen a long time ago';
+  final d = DateTime.fromMillisecondsSinceEpoch(ms);
+  final now = DateTime.now();
+  final diff = now.difference(d);
+  if (diff.inSeconds < 60) return 'last seen just now';
+  if (diff.inMinutes < 60) return 'last seen ${diff.inMinutes} min ago';
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(d.year, d.month, d.day);
+  final days = today.difference(day).inDays;
+  if (days == 0) return 'last seen today at ${fmtHm(ms)}';
+  if (days == 1) return 'last seen yesterday at ${fmtHm(ms)}';
+  return 'last seen ${d.year}/${_two(d.month)}/${_two(d.day)}';
+}
+
 class Avatar extends StatelessWidget {
   final int id;
   final String name;
   final double size;
-  const Avatar({super.key, required this.id, required this.name, this.size = 54});
+  final String? url;
+  final bool online;
+  const Avatar({
+    super.key,
+    required this.id,
+    required this.name,
+    this.size = 54,
+    this.url,
+    this.online = false,
+  });
 
-  @override
-  Widget build(BuildContext context) {
+  /// از روی map کاربر (id, username, avatar, online)
+  Avatar.fromUser(Map<String, dynamic> u, {super.key, this.size = 54, bool showOnline = false})
+      : id = (u['id'] as num?)?.toInt() ?? 0,
+        name = (u['username'] as String?) ?? '?',
+        url = u['avatar'] as String?,
+        online = showOnline && u['online'] == true;
+
+  Widget _letter() {
     final c = avatarColor(id);
     return Container(
       width: size,
@@ -74,6 +125,52 @@ class Avatar extends StatelessWidget {
       child: Text(
         name.isEmpty ? '?' : name[0].toUpperCase(),
         style: TextStyle(color: Colors.white, fontSize: size * 0.42, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget base;
+    final u = url;
+    if (u == null || u.isEmpty) {
+      base = _letter();
+    } else {
+      base = ClipOval(
+        child: Image.network(
+          '${Api.baseUrl}$u',
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) => _letter(),
+          loadingBuilder: (_, child, p) => p == null ? child : _letter(),
+        ),
+      );
+    }
+    if (!online) return base;
+    final dot = size * 0.26;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          base,
+          Positioned(
+            right: -1,
+            bottom: -1,
+            child: Container(
+              width: dot,
+              height: dot,
+              decoration: BoxDecoration(
+                color: const Color(0xFF4CD964),
+                shape: BoxShape.circle,
+                border: Border.all(color: context.cardBg, width: 2),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

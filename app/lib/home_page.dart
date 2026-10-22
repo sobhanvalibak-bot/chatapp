@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'api.dart';
 import 'chat_page.dart';
 import 'login_page.dart';
+import 'profile_page.dart';
 import 'utils.dart';
 
 class HomePage extends StatefulWidget {
@@ -26,13 +27,46 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _load();
-    _sub = Api.messages.listen((_) => _load(silent: true));
+    _loadMe();
+    _sub = Api.events.listen(_onEvent);
   }
 
   @override
   void dispose() {
     _sub?.cancel();
     super.dispose();
+  }
+
+  void _onEvent(Map<String, dynamic> e) {
+    if (!mounted) return;
+    switch (e['type']) {
+      case 'user':
+        final u = e['user'];
+        if (u is! Map) return;
+        if (u['id'] == Api.userId) {
+          Api.me = Map<String, dynamic>.from(u);
+          setState(() {});
+        }
+        var changed = false;
+        for (final c in _chats) {
+          final p = c['peer'] as Map;
+          if (p['id'] == u['id']) {
+            c['peer'] = Map<String, dynamic>.from(u);
+            changed = true;
+          }
+        }
+        if (changed) setState(() {});
+        break;
+      default:
+        _load(silent: true);
+    }
+  }
+
+  Future<void> _loadMe() async {
+    try {
+      await Api.refreshMe();
+      if (mounted) setState(() {});
+    } catch (_) {}
   }
 
   Future<void> _load({bool silent = false}) async {
@@ -71,12 +105,73 @@ class _HomePageState extends State<HomePage> {
     _load(silent: true);
   }
 
+  void _openProfile(Map<String, dynamic> peer) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => ProfilePage(userId: peer['id'] as int, initial: peer)),
+    );
+  }
+
+  void _themeMenu() {
+    showCupertinoModalPopup(
+      context: context,
+      builder: (ctx) {
+        Widget item(String label, ThemeMode m) => CupertinoActionSheetAction(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Api.setTheme(m);
+              },
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(label),
+                  if (Api.themeMode.value == m) ...[
+                    const SizedBox(width: 8),
+                    const Icon(CupertinoIcons.check_mark, size: 18),
+                  ],
+                ],
+              ),
+            );
+        return CupertinoActionSheet(
+          title: const Text('Appearance'),
+          actions: [
+            item('Light', ThemeMode.light),
+            item('Dark', ThemeMode.dark),
+            item('System default', ThemeMode.system),
+          ],
+          cancelButton: CupertinoActionSheetAction(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        );
+      },
+    );
+  }
+
   void _profile() {
     showCupertinoModalPopup(
       context: context,
       builder: (ctx) => CupertinoActionSheet(
         title: const Text('Accounts'),
         actions: [
+          CupertinoActionSheetAction(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ProfileEditPage()),
+              );
+              if (mounted) setState(() {});
+            },
+            child: const Text('Edit profile'),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _themeMenu();
+            },
+            child: Text(Api.themeMode.value == ThemeMode.dark
+                ? 'Appearance: Dark'
+                : (Api.themeMode.value == ThemeMode.light ? 'Appearance: Light' : 'Appearance: System')),
+          ),
           for (final a in Api.accounts)
             CupertinoActionSheetAction(
               onPressed: () async {
@@ -92,7 +187,12 @@ class _HomePageState extends State<HomePage> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Avatar(id: a.id, name: a.username, size: 26),
+                  Avatar(
+                    id: a.id,
+                    name: a.username,
+                    size: 26,
+                    url: a.id == Api.userId ? Api.me?['avatar'] as String? : null,
+                  ),
                   const SizedBox(width: 10),
                   Text(a.username, textDirection: TextDirection.ltr),
                   if (a.id == Api.userId) ...[
@@ -153,7 +253,10 @@ class _HomePageState extends State<HomePage> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           children: [
-            Avatar(id: peer['id'] as int, name: peer['username'] as String),
+            GestureDetector(
+              onTap: () => _openProfile(peer),
+              child: Avatar.fromUser(peer, showOnline: true),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -169,11 +272,16 @@ class _HomePageState extends State<HomePage> {
                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                         ),
                       ),
+                      if (mine) ...[
+                        Icon(last['read'] == true ? Icons.done_all : Icons.done,
+                            size: 16, color: last['read'] == true ? context.tickRead : context.subText),
+                        const SizedBox(width: 3),
+                      ],
                       Text(
                         fmtTime(last['createdAt'] as int),
                         style: TextStyle(
                           fontSize: 12.5,
-                          color: unread > 0 ? tgBlue : Colors.grey,
+                          color: unread > 0 ? tgBlue : context.subText,
                         ),
                       ),
                     ],
@@ -187,7 +295,7 @@ class _HomePageState extends State<HomePage> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           textDirection: dirOf(text),
-                          style: const TextStyle(fontSize: 14.5, color: Colors.grey),
+                          style: TextStyle(fontSize: 14.5, color: context.subText),
                         ),
                       ),
                       if (unread > 0)
@@ -224,7 +332,7 @@ class _HomePageState extends State<HomePage> {
           children: [
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 32),
-              child: Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey)),
+              child: Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: context.subText)),
             ),
             TextButton(
               onPressed: () {
@@ -245,13 +353,13 @@ class _HomePageState extends State<HomePage> {
                 .contains(_q.toLowerCase()))
             .toList();
     if (list.isEmpty) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 32),
+          padding: const EdgeInsets.symmetric(horizontal: 32),
           child: Text(
             'No chats yet.\nTap the button at the top to start a new chat.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey, height: 1.7),
+            style: TextStyle(color: context.subText, height: 1.7),
           ),
         ),
       );
@@ -274,7 +382,14 @@ class _HomePageState extends State<HomePage> {
         leading: InkResponse(
           onTap: _profile,
           onLongPress: _profile,
-          child: Center(child: Avatar(id: Api.userId ?? 0, name: Api.username ?? '?', size: 32)),
+          child: Center(
+            child: Avatar(
+              id: Api.userId ?? 0,
+              name: Api.username ?? '?',
+              size: 32,
+              url: Api.me?['avatar'] as String?,
+            ),
+          ),
         ),
         actions: [
           IconButton(
@@ -349,7 +464,7 @@ class _NewChatPageState extends State<NewChatPage> {
           if (_loading) const LinearProgressIndicator(minHeight: 2),
           Expanded(
             child: _users.isEmpty && !_loading
-                ? const Center(child: Text('No users found', style: TextStyle(color: Colors.grey)))
+                ? Center(child: Text('No users found', style: TextStyle(color: context.subText)))
                 : ListView.separated(
                     itemCount: _users.length,
                     separatorBuilder: (_, __) =>
@@ -357,9 +472,20 @@ class _NewChatPageState extends State<NewChatPage> {
                     itemBuilder: (_, i) {
                       final u = _users[i];
                       return ListTile(
-                        leading: Avatar(id: u['id'] as int, name: u['username'] as String, size: 44),
-                        title: Text(u['username'] as String, textDirection: TextDirection.ltr,
-                            textAlign: TextAlign.start),
+                        leading: GestureDetector(
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ProfilePage(userId: u['id'] as int, initial: u),
+                            ),
+                          ),
+                          child: Avatar.fromUser(u, size: 44, showOnline: true),
+                        ),
+                        title: Text(u['username'] as String,
+                            textDirection: TextDirection.ltr, textAlign: TextAlign.start),
+                        subtitle: Text(presenceText(u),
+                            style: TextStyle(
+                                fontSize: 12.5,
+                                color: u['online'] == true ? tgBlue : context.subText)),
                         onTap: () => Navigator.of(context).pushReplacement(
                           MaterialPageRoute(
                             builder: (_) => ChatPage(

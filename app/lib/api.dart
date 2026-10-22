@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -14,7 +15,7 @@ class ApiException implements Exception {
 
 class Account {
   final int id;
-  final String username;
+  String username;
   final String token;
   Account({required this.id, required this.username, required this.token});
 
@@ -29,6 +30,9 @@ class Api {
   static String? notice;
   static String storageStatus = 'ok';
 
+  /// حالت تم (روشن / تاریک / سیستم)
+  static final ValueNotifier<ThemeMode> themeMode = ValueNotifier(ThemeMode.system);
+
   // ---- accounts (multi-account, saved on the phone) ----
   static List<Account> accounts = [];
   static Account? _active;
@@ -37,8 +41,12 @@ class Api {
   static int? get userId => _active?.id;
   static bool get loggedIn => _active != null;
 
-  static final _msgCtrl = StreamController<Map<String, dynamic>>.broadcast();
-  static Stream<Map<String, dynamic>> get messages => _msgCtrl.stream;
+  /// پروفایل خودم (username, bio, avatar, ...)
+  static Map<String, dynamic>? me;
+
+  /// همه‌ی رویدادهای لحظه‌ای سرور: message, edit, delete, pin, read, user, hello
+  static final _evCtrl = StreamController<Map<String, dynamic>>.broadcast();
+  static Stream<Map<String, dynamic>> get events => _evCtrl.stream;
   static WebSocketChannel? _ws;
   static Timer? _retry;
   static bool _wsWanted = false;
@@ -54,6 +62,9 @@ class Api {
     try {
       final p = await SharedPreferences.getInstance();
       baseUrl = p.getString('baseUrl') ?? baseUrl;
+      final t = p.getString('theme');
+      if (t == 'dark') themeMode.value = ThemeMode.dark;
+      if (t == 'light') themeMode.value = ThemeMode.light;
       final raw = p.getString('accounts');
       if (raw != null) {
         accounts = (json.decode(raw) as List)
@@ -66,6 +77,14 @@ class Api {
       storageStatus = 'read error: $e';
     }
     if (_active == null && accounts.isNotEmpty) _active = accounts.first;
+  }
+
+  static Future<void> setTheme(ThemeMode m) async {
+    themeMode.value = m;
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setString('theme', m == ThemeMode.dark ? 'dark' : (m == ThemeMode.light ? 'light' : 'system'));
+    } catch (_) {}
   }
 
   static Future<void> _save() async {
@@ -118,16 +137,26 @@ class Api {
     return e;
   }
 
-  static Future<dynamic> _req(String method, String path, {Map? body}) async {
+  static Future<dynamic> _req(String method, String path, {Map? body, int timeout = 10}) async {
     late http.Response r;
     try {
       final uri = Uri.parse('$baseUrl$path');
-      if (method == 'GET') {
-        r = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 10));
-      } else {
-        r = await http
-            .post(uri, headers: _headers, body: json.encode(body ?? {}))
-            .timeout(const Duration(seconds: 10));
+      final t = Duration(seconds: timeout);
+      switch (method) {
+        case 'GET':
+          r = await http.get(uri, headers: _headers).timeout(t);
+          break;
+        case 'PUT':
+          r = await http.put(uri, headers: _headers, body: json.encode(body ?? {})).timeout(t);
+          break;
+        case 'PATCH':
+          r = await http.patch(uri, headers: _headers, body: json.encode(body ?? {})).timeout(t);
+          break;
+        case 'DELETE':
+          r = await http.delete(uri, headers: _headers).timeout(t);
+          break;
+        default:
+          r = await http.post(uri, headers: _headers, body: json.encode(body ?? {})).timeout(t);
       }
     } catch (_) {
       throw ApiException(
@@ -169,6 +198,7 @@ class Api {
     accounts.removeWhere((a) => a.id == acc.id);
     accounts.add(acc);
     _active = acc;
+    me = null;
     await _save();
     try {
       connectWs();
@@ -178,6 +208,7 @@ class Api {
   /// Switch to another saved account (no password needed).
   static Future<void> switchTo(Account a) async {
     _active = a;
+    me = null;
     await _save();
     try {
       connectWs();
@@ -190,6 +221,7 @@ class Api {
     accounts.removeWhere((a) => a.id == id);
     _closeWs();
     _active = accounts.isNotEmpty ? accounts.first : null;
+    me = null;
     await _save();
     if (_active != null) {
       try {
@@ -201,6 +233,48 @@ class Api {
   static List<Map<String, dynamic>> _list(dynamic d) =>
       (d as List).map((e) => Map<String, dynamic>.from(e)).toList();
 
+  static Map<String, dynamic> _map(dynamic d) => Map<String, dynamic>.from(d as Map);
+
+  // ---- profile ----
+  static Future<void> _applyMe(Map<String, dynamic> d) async {
+    me = d;
+    final a = _active;
+    if (a != null && d['username'] is String && d['username'] != a.username) {
+      a.username = d['username'] as String;
+      await _save();
+    }
+  }
+
+  static Future<Map<String, dynamic>> refreshMe() async {
+    final d = _map(await _req('GET', '/me'));
+    await _applyMe(d);
+    return d;
+  }
+
+  static Future<Map<String, dynamic>> updateProfile({String? username, String? bio}) async {
+    final body = <String, dynamic>{};
+    if (username != null) body['username'] = username;
+    if (bio != null) body['bio'] = bio;
+    final d = _map(await _req('PATCH', '/me', body: body));
+    await _applyMe(d);
+    return d;
+  }
+
+  static Future<Map<String, dynamic>> uploadAvatar(List<int> bytes) async {
+    final d = _map(await _req('POST', '/me/avatar', body: {'data': base64Encode(bytes)}, timeout: 40));
+    await _applyMe(d);
+    return d;
+  }
+
+  static Future<Map<String, dynamic>> removeAvatar() async {
+    final d = _map(await _req('DELETE', '/me/avatar'));
+    await _applyMe(d);
+    return d;
+  }
+
+  static Future<Map<String, dynamic>> user(int id) async => _map(await _req('GET', '/users/$id'));
+
+  // ---- chats / messages ----
   static Future<List<Map<String, dynamic>>> chats() async => _list(await _req('GET', '/chats'));
 
   static Future<List<Map<String, dynamic>>> users(String q) async =>
@@ -210,7 +284,18 @@ class Api {
       _list(await _req('GET', '/messages/$peer'));
 
   static Future<Map<String, dynamic>> send(int peer, String text) async =>
-      Map<String, dynamic>.from(await _req('POST', '/messages/$peer', body: {'text': text}));
+      _map(await _req('POST', '/messages/$peer', body: {'text': text}));
+
+  static Future<Map<String, dynamic>> editMessage(int id, String text) async =>
+      _map(await _req('PUT', '/message/$id', body: {'text': text}));
+
+  /// everyone = true → برای هر دو طرف (فقط پیام‌های خودم)
+  static Future<void> deleteMessage(int id, {required bool everyone}) async {
+    await _req('DELETE', '/message/$id${everyone ? '?all=1' : ''}');
+  }
+
+  static Future<Map<String, dynamic>> pinMessage(int id, bool pinned) async =>
+      _map(await _req('POST', '/message/$id/pin', body: {'pinned': pinned}));
 
   static Future<void> markRead(int peer) async {
     try {
@@ -218,7 +303,7 @@ class Api {
     } catch (_) {}
   }
 
-  // ---- WebSocket (realtime messages) ----
+  // ---- WebSocket (realtime) ----
   static void _closeWs() {
     _wsWanted = false;
     _retry?.cancel();
@@ -228,6 +313,9 @@ class Api {
       ws?.sink.close();
     } catch (_) {}
   }
+
+  /// وقتی اپ میره بک‌گراند صدا زده میشه (برای درست شدن «آخرین بازدید»)
+  static void disconnectWs() => _closeWs();
 
   static void connectWs() {
     if (token == null) return;
@@ -241,8 +329,8 @@ class Api {
         (e) {
           try {
             final m = json.decode(e as String);
-            if (m['type'] == 'message') {
-              _msgCtrl.add(Map<String, dynamic>.from(m['message']));
+            if (m is Map && m['type'] is String) {
+              _evCtrl.add(Map<String, dynamic>.from(m));
             }
           } catch (_) {}
         },

@@ -109,7 +109,7 @@ class _LoginPageState extends State<LoginPage> {
   InputDecoration _dec(String hint, {Widget? suffix}) => InputDecoration(
         hintText: hint,
         filled: true,
-        fillColor: const Color(0xFFF1F3F5),
+        fillColor: context.fieldFill,
         suffixIcon: suffix,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: OutlineInputBorder(
@@ -129,7 +129,7 @@ class _LoginPageState extends State<LoginPage> {
                 top: 4,
                 left: 4,
                 child: IconButton(
-                  icon: const Icon(CupertinoIcons.xmark, color: Colors.grey),
+                  icon: Icon(CupertinoIcons.xmark, color: context.subText),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
               ),
@@ -138,7 +138,7 @@ class _LoginPageState extends State<LoginPage> {
               right: 4,
               child: IconButton(
                 tooltip: 'Server address',
-                icon: const Icon(CupertinoIcons.gear, color: Colors.grey),
+                icon: Icon(CupertinoIcons.gear, color: context.subText),
                 onPressed: () async {
                   if (await showServerDialog(context)) setState(() {});
                 },
@@ -172,7 +172,7 @@ class _LoginPageState extends State<LoginPage> {
                     Text(
                       Api.baseUrl,
                       textDirection: TextDirection.ltr,
-                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                      style: TextStyle(color: context.subText, fontSize: 12),
                     ),
                     const SizedBox(height: 28),
                     TextField(
@@ -197,7 +197,7 @@ class _LoginPageState extends State<LoginPage> {
                         'Password',
                         suffix: IconButton(
                           icon: Icon(_hide ? CupertinoIcons.eye : CupertinoIcons.eye_slash,
-                              size: 20, color: Colors.grey),
+                              size: 20, color: context.subText),
                           onPressed: () => setState(() => _hide = !_hide),
                         ),
                       ),
@@ -222,7 +222,7 @@ class _LoginPageState extends State<LoginPage> {
                     ],
                     if (Api.storageStatus != 'ok') ...[
                       const SizedBox(height: 10),
-                      Text('Warning: login cannot be saved (${Api.storageStatus})',
+                      Text('Warning: login cannot be saved on this device',
                           textAlign: TextAlign.center,
                           style: const TextStyle(color: Colors.orange, fontSize: 12)),
                     ],

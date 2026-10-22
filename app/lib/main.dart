@@ -34,33 +34,78 @@ Future<void> main() async {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+ThemeData _theme(Brightness b) {
+  final dark = b == Brightness.dark;
+  final bg = dark ? const Color(0xFF0E1621) : Colors.white;
+  final bar = dark ? const Color(0xFF17212B) : Colors.white;
+  final fg = dark ? Colors.white : Colors.black;
+  return ThemeData(
+    useMaterial3: true,
+    brightness: b,
+    colorScheme: ColorScheme.fromSeed(seedColor: tgBlue, primary: tgBlue, brightness: b),
+    scaffoldBackgroundColor: bg,
+    appBarTheme: AppBarTheme(
+      backgroundColor: bar,
+      foregroundColor: fg,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0.5,
+      centerTitle: true,
+      titleTextStyle: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: fg),
+    ),
+    dividerTheme: DividerThemeData(
+      color: dark ? const Color(0xFF223040) : const Color(0xFFE3E5E8),
+    ),
+    pageTransitionsTheme: const PageTransitionsTheme(builders: {
+      TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+    }),
+  );
+}
+
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
   @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // وقتی اپ بسته/بک‌گراند میشه آفلاین حساب میشیم و «آخرین بازدید» ثبت میشه
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (Api.loggedIn) Api.connectWs();
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      Api.disconnectWs();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: navKey,
-      debugShowCheckedModeBanner: false,
-      title: 'Chat',
-      scrollBehavior: const CupertinoScrollBehavior(),
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: tgBlue, primary: tgBlue),
-        scaffoldBackgroundColor: Colors.white,
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black,
-          elevation: 0,
-          scrolledUnderElevation: 0.5,
-          centerTitle: true,
-          titleTextStyle: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.black),
-        ),
-        pageTransitionsTheme: const PageTransitionsTheme(builders: {
-          TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-        }),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: Api.themeMode,
+      builder: (_, mode, __) => MaterialApp(
+        navigatorKey: navKey,
+        debugShowCheckedModeBanner: false,
+        title: 'Chat',
+        scrollBehavior: const CupertinoScrollBehavior(),
+        theme: _theme(Brightness.light),
+        darkTheme: _theme(Brightness.dark),
+        themeMode: mode,
+        home: Api.loggedIn ? const HomePage() : const LoginPage(),
       ),
-      home: Api.loggedIn ? const HomePage() : const LoginPage(),
     );
   }
 }
