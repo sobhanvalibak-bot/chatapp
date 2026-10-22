@@ -205,7 +205,7 @@ class _HomePageState extends State<HomePage> {
                     id: a.id,
                     name: a.username,
                     size: 26,
-                    url: a.id == Api.userId ? Api.me?['avatar'] as String? : null,
+                    url: a.id == Api.userId ? (Api.me?['avatar'] as String?) : null,
                   ),
                   const SizedBox(width: 10),
                   Text(a.username, textDirection: TextDirection.ltr),
