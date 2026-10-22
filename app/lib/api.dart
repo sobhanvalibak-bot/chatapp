@@ -12,13 +12,30 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+class Account {
+  final int id;
+  final String username;
+  final String token;
+  Account({required this.id, required this.username, required this.token});
+
+  Map<String, dynamic> toJson() => {'id': id, 'username': username, 'token': token};
+  factory Account.fromJson(Map<String, dynamic> j) =>
+      Account(id: j['id'] as int, username: j['username'] as String, token: j['token'] as String);
+}
+
 class Api {
   static String baseUrl = 'http://127.0.0.1:3001';
-  static String? token;
-  static String? username;
-  static int? userId;
   static void Function()? onUnauthorized;
   static String? notice;
+  static String storageStatus = 'ok';
+
+  // ---- accounts (multi-account, saved on the phone) ----
+  static List<Account> accounts = [];
+  static Account? _active;
+  static String? get token => _active?.token;
+  static String? get username => _active?.username;
+  static int? get userId => _active?.id;
+  static bool get loggedIn => _active != null;
 
   static final _msgCtrl = StreamController<Map<String, dynamic>>.broadcast();
   static Stream<Map<String, dynamic>> get messages => _msgCtrl.stream;
@@ -26,14 +43,41 @@ class Api {
   static Timer? _retry;
   static bool _wsWanted = false;
 
-  static bool get loggedIn => token != null;
+  static Account? _find(int? id) {
+    for (final a in accounts) {
+      if (a.id == id) return a;
+    }
+    return null;
+  }
 
   static Future<void> init() async {
-    final p = await SharedPreferences.getInstance();
-    baseUrl = p.getString('baseUrl') ?? baseUrl;
-    token = p.getString('token');
-    username = p.getString('username');
-    userId = p.getInt('userId');
+    try {
+      final p = await SharedPreferences.getInstance();
+      baseUrl = p.getString('baseUrl') ?? baseUrl;
+      final raw = p.getString('accounts');
+      if (raw != null) {
+        accounts = (json.decode(raw) as List)
+            .map((e) => Account.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+      }
+      _active = _find(p.getInt('activeId'));
+      storageStatus = 'ok';
+    } catch (e) {
+      storageStatus = 'read error: $e';
+    }
+    if (_active == null && accounts.isNotEmpty) _active = accounts.first;
+  }
+
+  static Future<void> _save() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      final ok1 = await p.setString('accounts', json.encode(accounts.map((a) => a.toJson()).toList()));
+      final ok2 = _active != null ? await p.setInt('activeId', _active!.id) : await p.remove('activeId');
+      if (!ok1 || !ok2) throw 'write returned false';
+      storageStatus = 'ok';
+    } catch (e) {
+      storageStatus = 'write error: $e';
+    }
   }
 
   static Future<void> setBaseUrl(String url) async {
@@ -44,8 +88,10 @@ class Api {
     if (url.isEmpty) return;
     if (!url.startsWith('http')) url = 'http://$url';
     baseUrl = url;
-    final p = await SharedPreferences.getInstance();
-    await p.setString('baseUrl', url);
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setString('baseUrl', url);
+    } catch (_) {}
   }
 
   static Map<String, String> get _headers => {
@@ -107,39 +153,49 @@ class Api {
     return data;
   }
 
+  /// Sign in / sign up. The account is added to the saved list and becomes active.
   static Future<void> auth(String path, String u, String p) async {
     final d = await _req('POST', path, body: {'username': u, 'password': p});
+    late Account acc;
     try {
-      token = d['token'] as String;
-      username = d['user']['username'] as String;
-      userId = d['user']['id'] as int;
+      acc = Account(
+        id: d['user']['id'] as int,
+        username: d['user']['username'] as String,
+        token: d['token'] as String,
+      );
     } catch (_) {
-      token = null;
       throw ApiException('Unexpected response from $baseUrl. Is this the chat server?');
     }
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('token', token!);
-      await prefs.setString('username', username!);
-      await prefs.setInt('userId', userId!);
-    } catch (_) {}
+    accounts.removeWhere((a) => a.id == acc.id);
+    accounts.add(acc);
+    _active = acc;
+    await _save();
     try {
       connectWs();
     } catch (_) {}
   }
 
+  /// Switch to another saved account (no password needed).
+  static Future<void> switchTo(Account a) async {
+    _active = a;
+    await _save();
+    try {
+      connectWs();
+    } catch (_) {}
+  }
+
+  /// Log out of the active account only. Other saved accounts stay.
   static Future<void> logout() async {
-    _wsWanted = false;
-    _retry?.cancel();
-    _ws?.sink.close();
-    _ws = null;
-    token = null;
-    username = null;
-    userId = null;
-    final p = await SharedPreferences.getInstance();
-    await p.remove('token');
-    await p.remove('username');
-    await p.remove('userId');
+    final id = userId;
+    accounts.removeWhere((a) => a.id == id);
+    _closeWs();
+    _active = accounts.isNotEmpty ? accounts.first : null;
+    await _save();
+    if (_active != null) {
+      try {
+        connectWs();
+      } catch (_) {}
+    }
   }
 
   static List<Map<String, dynamic>> _list(dynamic d) =>
@@ -163,11 +219,20 @@ class Api {
   }
 
   // ---- WebSocket (realtime messages) ----
+  static void _closeWs() {
+    _wsWanted = false;
+    _retry?.cancel();
+    final ws = _ws;
+    _ws = null;
+    try {
+      ws?.sink.close();
+    } catch (_) {}
+  }
+
   static void connectWs() {
     if (token == null) return;
+    _closeWs();
     _wsWanted = true;
-    _retry?.cancel();
-    _ws?.sink.close();
     final wsUrl = '${baseUrl.replaceFirst('http', 'ws')}/ws?token=$token';
     try {
       final ch = WebSocketChannel.connect(Uri.parse(wsUrl));

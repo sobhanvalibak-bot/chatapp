@@ -75,8 +75,42 @@ class _HomePageState extends State<HomePage> {
     showCupertinoModalPopup(
       context: context,
       builder: (ctx) => CupertinoActionSheet(
-        title: Text('@${Api.username ?? ''}', textDirection: TextDirection.ltr),
+        title: const Text('Accounts'),
         actions: [
+          for (final a in Api.accounts)
+            CupertinoActionSheetAction(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                if (a.id == Api.userId) return;
+                await Api.switchTo(a);
+                if (!mounted) return;
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const HomePage()),
+                  (r) => false,
+                );
+              },
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Avatar(id: a.id, name: a.username, size: 26),
+                  const SizedBox(width: 10),
+                  Text(a.username, textDirection: TextDirection.ltr),
+                  if (a.id == Api.userId) ...[
+                    const SizedBox(width: 8),
+                    const Icon(CupertinoIcons.check_mark, size: 18),
+                  ],
+                ],
+              ),
+            ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const LoginPage(addingAccount: true)),
+              );
+            },
+            child: const Text('Add account'),
+          ),
           CupertinoActionSheetAction(
             onPressed: () async {
               Navigator.pop(ctx);
@@ -92,11 +126,11 @@ class _HomePageState extends State<HomePage> {
               await Api.logout();
               if (!mounted) return;
               Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const LoginPage()),
+                MaterialPageRoute(builder: (_) => Api.loggedIn ? const HomePage() : const LoginPage()),
                 (r) => false,
               );
             },
-            child: const Text('Log out'),
+            child: Text('Log out @${Api.username ?? ''}'),
           ),
         ],
         cancelButton: CupertinoActionSheetAction(
@@ -237,9 +271,10 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Chats'),
-        leading: IconButton(
-          icon: const Icon(CupertinoIcons.person_crop_circle, size: 26),
-          onPressed: _profile,
+        leading: InkResponse(
+          onTap: _profile,
+          onLongPress: _profile,
+          child: Center(child: Avatar(id: Api.userId ?? 0, name: Api.username ?? '?', size: 32)),
         ),
         actions: [
           IconButton(

@@ -40,7 +40,8 @@ Future<bool> showServerDialog(BuildContext context) async {
 }
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  final bool addingAccount;
+  const LoginPage({super.key, this.addingAccount = false});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -123,6 +124,15 @@ class _LoginPageState extends State<LoginPage> {
       body: SafeArea(
         child: Stack(
           children: [
+            if (widget.addingAccount)
+              Positioned(
+                top: 4,
+                left: 4,
+                child: IconButton(
+                  icon: const Icon(CupertinoIcons.xmark, color: Colors.grey),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ),
             Positioned(
               top: 4,
               right: 4,
@@ -209,6 +219,12 @@ class _LoginPageState extends State<LoginPage> {
                       Text(_error!,
                           textAlign: TextAlign.center,
                           style: const TextStyle(color: Color(0xFFE53935), fontSize: 13)),
+                    ],
+                    if (Api.storageStatus != 'ok') ...[
+                      const SizedBox(height: 10),
+                      Text('Warning: login cannot be saved (${Api.storageStatus})',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.orange, fontSize: 12)),
                     ],
                     const SizedBox(height: 22),
                     SizedBox(

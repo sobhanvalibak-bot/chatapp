@@ -27,7 +27,7 @@ Future<void> main() async {
   } catch (_) {}
   Api.onUnauthorized = () {
     navKey.currentState?.pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginPage()),
+      MaterialPageRoute(builder: (_) => Api.loggedIn ? const HomePage() : const LoginPage()),
       (r) => false,
     );
   };
