@@ -130,6 +130,10 @@ jobs:
         working-directory: app
         run: |
           flutter pub get
+          # اگه پکیجی از pubspec.yaml روی ریپو جا مونده باشه همین‌جا با پیام روشن fail میشه
+          for pkg in record camera android_intent_plus; do
+            grep -q "\"name\": \"$pkg\"" .dart_tool/package_config.json || { echo "ERROR: package '$pkg' is not in app/pubspec.yaml on the repo. Push the latest pubspec.yaml."; exit 1; }
+          done
           flutter build apk --release --no-shrink --build-number=${{ github.run_number }}
 
       - name: Sign with fixed key
