@@ -27,13 +27,64 @@ jobs:
           flutter create --platforms=android --org com.example --project-name chat_app .
           rm -rf test
 
-      - name: Patch AndroidManifest
+      - name: Patch AndroidManifest and MainActivity
         working-directory: app
         run: |
-          M=android/app/src/main/AndroidManifest.xml
-          sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application android:usesCleartextTraffic="true"|' $M
-          sed -i 's|android:label="[^"]*"|android:label="Chat"|' $M
-          sed -i 's|</application>|    <meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="false"/>\n    </application>|' $M
+          python3 - <<'PY'
+          import glob, re, sys
+
+          # ---- AndroidManifest: مجوزها + سرویس مدیا سشن ----
+          p = 'android/app/src/main/AndroidManifest.xml'
+          s = open(p, encoding='utf8').read()
+
+          perms = [
+              ('android.permission.INTERNET', ''),
+              ('android.permission.POST_NOTIFICATIONS', ''),
+              ('android.permission.READ_MEDIA_IMAGES', ''),
+              ('android.permission.READ_MEDIA_VIDEO', ''),
+              ('android.permission.READ_MEDIA_AUDIO', ''),
+              ('android.permission.READ_EXTERNAL_STORAGE', ' android:maxSdkVersion="32"'),
+              ('android.permission.WRITE_EXTERNAL_STORAGE', ' android:maxSdkVersion="28"'),
+              ('android.permission.FOREGROUND_SERVICE', ''),
+              ('android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK', ''),
+              ('android.permission.WAKE_LOCK', ''),
+          ]
+          perm_xml = ''.join('    <uses-permission android:name="%s"%s/>\n' % (n, e) for n, e in perms)
+          s = s.replace('<application', perm_xml + '    <application android:usesCleartextTraffic="true"', 1)
+          s = re.sub(r'android:label="[^"]*"', 'android:label="Chat"', s, count=1)
+
+          extra = """
+              <meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="false"/>
+              <service android:name="com.ryanheise.audioservice.AudioService"
+                  android:foregroundServiceType="mediaPlayback"
+                  android:exported="true">
+                  <intent-filter>
+                      <action android:name="android.media.browse.MediaBrowserService"/>
+                  </intent-filter>
+              </service>
+              <receiver android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+                  android:exported="true">
+                  <intent-filter>
+                      <action android:name="android.intent.action.MEDIA_BUTTON"/>
+                  </intent-filter>
+              </receiver>
+          """
+          s = s.replace('</application>', extra + '</application>', 1)
+          open(p, 'w', encoding='utf8').write(s)
+
+          # ---- MainActivity باید از AudioServiceActivity ارث ببره (برای just_audio_background) ----
+          files = glob.glob('android/app/src/main/**/MainActivity.*', recursive=True)
+          if not files:
+              sys.exit('MainActivity not found')
+          for f in files:
+              if not f.endswith('.kt'):
+                  sys.exit('Unexpected MainActivity type: ' + f)
+              pkg = re.search(r'package\s+([\w.]+)', open(f, encoding='utf8').read()).group(1)
+              open(f, 'w', encoding='utf8').write(
+                  'package %s\n\nimport com.ryanheise.audioservice.AudioServiceActivity\n\nclass MainActivity : AudioServiceActivity()\n' % pkg)
+          PY
+          echo "---- AndroidManifest ----"
+          cat android/app/src/main/AndroidManifest.xml
 
       - name: Build release APK
         working-directory: app
