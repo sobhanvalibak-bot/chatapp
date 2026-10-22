@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'api.dart';
 import 'chat_page.dart';
 import 'file_widgets.dart';
+import 'gif_widgets.dart';
 import 'media_viewer.dart';
 import 'player.dart';
 import 'utils.dart';
@@ -33,7 +34,7 @@ class _ProfilePageState extends State<ProfilePage> {
   final _pc = PageController();
   int _page = 0;
   List<Map<String, dynamic>> _shared = [];
-  int _tab = 0; // 0 = Media, 1 = Music, 2 = Files
+  String _tab = 'media'; // media | music | files | gifs
 
   bool get _isMe => widget.userId == Api.userId;
 
@@ -128,276 +129,239 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
-  Widget _actionTile(IconData icon, String label, VoidCallback onTap) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          height: 62,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.16),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: Colors.white, size: 22),
-              const SizedBox(height: 3),
-              Text(label, style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w500)),
-            ],
-          ),
+  static const Map<String, String> _tabNames = {'media': 'Media', 'music': 'Music', 'files': 'Files', 'gifs': 'GIFs'};
+
+  double _lp(double a, double b, double t) => a + (b - a) * t;
+
+  void _openChat(Map<String, dynamic> u) {
+    if (widget.fromChat) {
+      Navigator.of(context).maybePop();
+    } else {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => ChatPage(peerId: u['id'] as int, peerName: u['username'] as String),
         ),
-      ),
-    );
+      );
+    }
   }
 
-  Widget _musicPill(Map<String, dynamic> u) {
-    final pm = profileMusicMsg(u);
-    if (pm == null) return const SizedBox.shrink();
-    final c = AudioCtl.i;
-    final artist = audioArtist(pm);
-    final title = audioTitle(pm);
-    final text = artist != null ? '$artist – $title' : title;
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: GestureDetector(
-        onTap: () async {
-          try {
-            await c.toggle(pm, [pm]);
-          } catch (_) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not play this song')));
-            }
-          }
-        },
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(12, 9, 10, 9),
-          decoration: BoxDecoration(color: Colors.white.withOpacity(0.16), borderRadius: BorderRadius.circular(22)),
-          child: Row(
-            children: [
-              const Icon(Icons.music_note_rounded, color: Colors.white, size: 19),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(text,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textDirection: dirOf(text),
-                    style: const TextStyle(color: Colors.white, fontSize: 14.5)),
-              ),
-              AnimatedBuilder(
-                animation: Listenable.merge([c.current, c.playing]),
-                builder: (_, __) => Icon(
-                  c.isCurrent(pm['id']) && c.playing.value ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  Future<void> _editProfile() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ProfileEditPage()));
+    _load();
   }
 
-  Widget _header(Map<String, dynamic> u) {
+  /// هدر تلگرامی: t = 0 یعنی کاملاً باز (عکس بزرگ)، t = 1 یعنی جمع‌شده (نوار بالا با دایره‌ی کوچیک و اسم)
+  Widget _header(Map<String, dynamic> u, double t) {
     final photos = userPhotos(u);
     final size = MediaQuery.of(context).size;
     final topPad = MediaQuery.of(context).padding.top;
-    final h = (size.width * 1.3).clamp(380.0, 600.0);
     final page = photos.isEmpty ? 0 : _page.clamp(0, photos.length - 1);
-    final hasMusic = u['music'] is Map;
-    return SizedBox(
-      height: h,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: photos.isEmpty
-                ? _letterBg(u)
-                : GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapUp: (d) => _photoTap(d, u, photos.length, size.width),
-                    child: PageView.builder(
-                      controller: _pc,
-                      itemCount: photos.length,
-                      onPageChanged: (i) => setState(() => _page = i),
-                      itemBuilder: (_, i) => Image.network(
-                        '${Api.baseUrl}${photos[i]['url']}',
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        height: double.infinity,
-                        gaplessPlayback: true,
-                        errorBuilder: (_, __, ___) => _letterBg(u),
+    final fadePhoto = (1 - t * 1.5).clamp(0.0, 1.0).toDouble();
+    final ease = Curves.easeIn.transform(t);
+    final fg = Color.lerp(Colors.white, context.mainText, ease)!;
+    final online = u['online'] == true;
+    final statusColor = Color.lerp(
+        online ? const Color(0xFF8FD1FF) : Colors.white70, online ? tgBlue : context.subText, ease)!;
+    final btnTop = topPad + _lp(photos.length > 1 ? 16 : 6, 4, t);
+    final lightIcons = t < 0.6 || context.dark;
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: (lightIcons ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
+          .copyWith(statusBarColor: Colors.transparent),
+      child: ClipRect(
+        child: Stack(
+          children: [
+            // زیرلایه‌ی نوار بالا (وقتی عکس محو شد دیده میشه)
+            Positioned.fill(child: ColoredBox(color: context.barBg)),
+            // عکس‌ها
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: fadePhoto < 0.5,
+                child: Opacity(
+                  opacity: fadePhoto,
+                  child: photos.isEmpty
+                      ? _letterBg(u)
+                      : GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTapUp: (d) => _photoTap(d, u, photos.length, size.width),
+                          child: PageView.builder(
+                            controller: _pc,
+                            itemCount: photos.length,
+                            onPageChanged: (i) => setState(() => _page = i),
+                            itemBuilder: (_, i) => Image.network(
+                              '${Api.baseUrl}${photos[i]['url']}',
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                              gaplessPlayback: true,
+                              errorBuilder: (_, __, ___) => _letterBg(u),
+                            ),
+                          ),
+                        ),
+                ),
+              ),
+            ),
+            // سایه‌ی بالا و پایین تا نوشته‌ها خوانا باشن
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              height: topPad + 110,
+              child: IgnorePointer(
+                child: Opacity(
+                  opacity: fadePhoto,
+                  child: const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0x99000000), Color(0x00000000)],
                       ),
                     ),
                   ),
-          ),
-          // سایه‌ی بالا و پایین تا نوشته‌ها خوانا باشن
-          Positioned(
-            left: 0,
-            right: 0,
-            top: 0,
-            height: topPad + 110,
-            child: const IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0x99000000), Color(0x00000000)],
-                  ),
                 ),
               ),
             ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: 340,
-            child: const IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0x00000000), Color(0xCC000000)],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // نوار قسمت‌بندی‌شده‌ی بالای عکس (چندتا عکس)
-          if (photos.length > 1)
             Positioned(
-              left: 8,
-              right: 8,
-              top: topPad + 8,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 200,
               child: IgnorePointer(
-                child: Row(
-                  children: [
-                    for (var i = 0; i < photos.length; i++)
-                      Expanded(
-                        child: Container(
-                          height: 3,
-                          margin: const EdgeInsets.symmetric(horizontal: 2),
-                          decoration: BoxDecoration(
-                            color: i == page ? Colors.white : Colors.white38,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ),
+                child: Opacity(
+                  opacity: fadePhoto,
+                  child: const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0x00000000), Color(0xB3000000)],
                       ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // نوار قسمت‌بندی‌شده‌ی بالای عکس (چندتا عکس)
+            if (photos.length > 1)
+              Positioned(
+                left: 8,
+                right: 8,
+                top: topPad + 8,
+                child: IgnorePointer(
+                  child: Opacity(
+                    opacity: fadePhoto,
+                    child: Row(
+                      children: [
+                        for (var i = 0; i < photos.length; i++)
+                          Expanded(
+                            child: Container(
+                              height: 3,
+                              margin: const EdgeInsets.symmetric(horizontal: 2),
+                              decoration: BoxDecoration(
+                                color: i == page ? Colors.white : Colors.white38,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            // خط پایین نوار وقتی کاملاً جمع شده
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Opacity(
+                opacity: t >= 0.98 ? 1 : 0,
+                child: Divider(height: 0.5, thickness: 0.5, color: context.subText.withOpacity(0.25)),
+              ),
+            ),
+            // دایره‌ی کوچیک عکس کنار اسم (وقتی جمع شد)
+            Positioned(
+              left: 56,
+              top: topPad + 10,
+              child: Opacity(
+                opacity: ((t - 0.7) / 0.3).clamp(0.0, 1.0).toDouble(),
+                child: Avatar.fromUser(u, size: 36),
+              ),
+            ),
+            // اسم و وضعیت: از پایین-چپ عکس میره کنار دایره‌ی کوچیک
+            Positioned(
+              left: _lp(18, 102, t),
+              right: 56,
+              bottom: _lp(14, 9, t),
+              child: IgnorePointer(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      u['username'] as String? ?? '',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: fg,
+                        fontSize: _lp(32, 18, t),
+                        fontWeight: FontWeight.w700,
+                        height: 1.15,
+                        shadows: t < 0.5 ? const [Shadow(blurRadius: 8, color: Colors.black54)] : null,
+                      ),
+                    ),
+                    Text(
+                      presenceText(u),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: _lp(15, 12.5, t), color: statusColor),
+                    ),
                   ],
                 ),
               ),
             ),
-          Positioned(
-            left: 4,
-            top: topPad + (photos.length > 1 ? 18 : 6),
-            child: IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
-              onPressed: () => Navigator.of(context).maybePop(),
+            Positioned(
+              left: 4,
+              top: btnTop,
+              child: IconButton(
+                icon: Icon(Icons.arrow_back, color: fg),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
             ),
-          ),
-          Positioned(
-            left: 18,
-            right: 18,
-            bottom: 14,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  u['username'] as String? ?? '',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 32,
-                    fontWeight: FontWeight.w700,
-                    shadows: [Shadow(blurRadius: 8, color: Colors.black54)],
-                  ),
+            if (_isMe)
+              Positioned(
+                right: 4,
+                top: btnTop,
+                child: IconButton(
+                  icon: Icon(Icons.edit_rounded, color: fg),
+                  onPressed: _editProfile,
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  presenceText(u),
-                  style: TextStyle(
-                    fontSize: 15,
-                    color: u['online'] == true ? const Color(0xFF8FD1FF) : Colors.white70,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    if (_isMe)
-                      _actionTile(Icons.edit_rounded, 'Edit profile', () async {
-                        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ProfileEditPage()));
-                        _load();
-                      })
-                    else
-                      _actionTile(CupertinoIcons.chat_bubble_fill, 'Message', () {
-                        if (widget.fromChat) {
-                          Navigator.of(context).maybePop();
-                        } else {
-                          Navigator.of(context).pushReplacement(
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  ChatPage(peerId: u['id'] as int, peerName: u['username'] as String),
-                            ),
-                          );
-                        }
-                      }),
-                  ],
-                ),
-                if (hasMusic) _musicPill(u),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------- info rows
-  Widget _info(String value, String label) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-      child: SizedBox(
-        width: double.infinity,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SelectableText(value, textDirection: dirOf(value), style: const TextStyle(fontSize: 18, height: 1.35)),
-            const SizedBox(height: 3),
-            Text(label, style: TextStyle(fontSize: 14, color: context.subText)),
+              ),
           ],
         ),
       ),
     );
   }
 
-  // ---------------------------------------------------------------- shared media
-  List<Map<String, dynamic>> _ofKind(Set<String> kinds) => _shared.where((m) => kinds.contains(fileKind(m))).toList();
-
-  Widget _tabs(int media, int music, int files, int tab) {
-    Widget t(int i, String label, int n) {
-      final sel = tab == i;
+  // ---------------------------------------------------------------- دکمه‌ی سریع + کارت اطلاعات
+  Widget _quickActions(Map<String, dynamic> u) {
+    Widget btn(IconData icon, String label, VoidCallback onTap) {
       return Expanded(
-        child: InkWell(
-          onTap: () => setState(() => _tab = i),
-          child: Container(
-            height: 46,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: sel ? tgBlue : Colors.transparent, width: 2.5),
-              ),
-            ),
-            child: Text(
-              '$label  $n',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: sel ? tgBlue : context.subText,
+        child: Material(
+          color: context.cardBg,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: onTap,
+            child: SizedBox(
+              height: 66,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, color: tgBlue, size: 24),
+                  const SizedBox(height: 4),
+                  Text(label, style: TextStyle(color: tgBlue, fontSize: 13, fontWeight: FontWeight.w500)),
+                ],
               ),
             ),
           ),
@@ -405,24 +369,169 @@ class _ProfilePageState extends State<ProfilePage> {
       );
     }
 
-    return Container(
-      margin: const EdgeInsets.only(top: 10),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: context.subText.withOpacity(0.15))),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
       child: Row(
         children: [
-          if (media > 0) t(0, 'Media', media),
-          if (music > 0) t(1, 'Music', music),
-          if (files > 0) t(2, 'Files', files),
+          if (_isMe)
+            btn(Icons.edit_rounded, 'Edit profile', _editProfile)
+          else
+            btn(CupertinoIcons.chat_bubble_fill, 'Message', () => _openChat(u)),
         ],
+      ),
+    );
+  }
+
+  void _copy(String text, String what) {
+    Clipboard.setData(ClipboardData(text: text));
+    HapticFeedback.selectionClick();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text('$what copied'), duration: const Duration(seconds: 1)));
+  }
+
+  Widget _infoRow(String value, String label, {String? copyLabel}) {
+    return InkWell(
+      onTap: () => _copy(value, copyLabel ?? label),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+        child: SizedBox(
+          width: double.infinity,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(value, textDirection: dirOf(value), style: const TextStyle(fontSize: 17, height: 1.3)),
+              const SizedBox(height: 3),
+              Text(label, style: TextStyle(fontSize: 13.5, color: context.subText)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _musicInfoRow(Map<String, dynamic> u) {
+    final pm = profileMusicMsg(u);
+    if (pm == null) return const SizedBox.shrink();
+    final c = AudioCtl.i;
+    final artist = audioArtist(pm);
+    final title = audioTitle(pm);
+    final text = artist != null ? '$artist – $title' : title;
+    return InkWell(
+      onTap: () async {
+        try {
+          await c.toggle(pm, [pm]);
+        } catch (_) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not play this song')));
+          }
+        }
+      },
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 12, 14, 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(text,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textDirection: dirOf(text),
+                      style: const TextStyle(fontSize: 17, height: 1.3)),
+                  const SizedBox(height: 3),
+                  Text('Profile music', style: TextStyle(fontSize: 13.5, color: context.subText)),
+                ],
+              ),
+            ),
+            AnimatedBuilder(
+              animation: Listenable.merge([c.current, c.playing]),
+              builder: (_, __) => Icon(
+                c.isCurrent(pm['id']) && c.playing.value ? Icons.pause_circle_filled_rounded : Icons.play_circle_fill_rounded,
+                color: tgBlue,
+                size: 34,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _infoCard(Map<String, dynamic> u) {
+    final bio = ((u['bio'] as String?) ?? '').trim();
+    final rows = <Widget>[
+      if (bio.isNotEmpty) _infoRow(bio, 'Bio'),
+      _infoRow('@${u['username'] ?? ''}', 'Username'),
+      if (u['music'] is Map) _musicInfoRow(u),
+    ];
+    final children = <Widget>[];
+    for (var i = 0; i < rows.length; i++) {
+      if (i > 0) children.add(Divider(height: 0.5, thickness: 0.5, indent: 18, color: context.subText.withOpacity(0.2)));
+      children.add(rows[i]);
+    }
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(color: context.cardBg, borderRadius: BorderRadius.circular(14)),
+      child: Column(children: children),
+    );
+  }
+
+  // ---------------------------------------------------------------- shared media
+  List<Map<String, dynamic>> _ofKind(Set<String> kinds) => _shared.where((m) => kinds.contains(fileKind(m))).toList();
+
+  /// تب‌های چسبنده (مثل تلگرام): فقط تب‌هایی که چیزی توشون هست
+  Widget _tabs(List<MapEntry<String, int>> items, String sel) {
+    return Container(
+      color: context.cardBg,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final e in items)
+              InkWell(
+                onTap: () => setState(() => _tab = e.key),
+                child: Container(
+                  height: 46,
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    border: Border(bottom: BorderSide(color: sel == e.key ? tgBlue : Colors.transparent, width: 2.5)),
+                  ),
+                  child: Text(
+                    '${_tabNames[e.key] ?? e.key}  ${e.value}',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: sel == e.key ? tgBlue : context.subText,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _mediaTile(Map<String, dynamic> m, List<Map<String, dynamic>> images) {
     final f = fileOf(m)!;
-    if (f['kind'] == 'video' || f['kind'] == 'gif') {
+    if (f['kind'] == 'gif') {
+      return GestureDetector(
+        onTap: () => openVideo(context, m),
+        child: LayoutBuilder(
+          builder: (_, c) => GifVideo(
+            url: Api.fileUrl(f),
+            width: c.maxWidth,
+            height: c.maxHeight,
+            radius: BorderRadius.zero,
+          ),
+        ),
+      );
+    }
+    if (f['kind'] == 'video') {
       return GestureDetector(
         onTap: () => openVideo(context, m),
         child: Container(
@@ -529,37 +638,48 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   List<Widget> _sharedSlivers() {
-    final media = _ofKind({'image', 'video', 'gif'});
+    final media = _shared.where((m) {
+      final k = fileKind(m);
+      return (k == 'image' && !isGifMsg(m)) || k == 'video';
+    }).toList();
+    final gifs = _shared.where((m) => isGifMsg(m)).toList();
     final music = _ofKind({'audio'});
     final files = _ofKind({'file'});
-    if (media.isEmpty && music.isEmpty && files.isEmpty) return [];
+    final items = <MapEntry<String, int>>[
+      if (media.isNotEmpty) MapEntry('media', media.length),
+      if (music.isNotEmpty) MapEntry('music', music.length),
+      if (files.isNotEmpty) MapEntry('files', files.length),
+      if (gifs.isNotEmpty) MapEntry('gifs', gifs.length),
+    ];
+    if (items.isEmpty) return [];
     var tab = _tab;
-    final counts = [media.length, music.length, files.length];
-    if (counts[tab] == 0) tab = counts.indexWhere((n) => n > 0);
+    if (!items.any((e) => e.key == tab)) tab = items.first.key;
     final images = media.where((m) => fileKind(m) == 'image').toList();
-    return [
-      SliverToBoxAdapter(child: _tabs(media.length, music.length, files.length, tab)),
-      if (tab == 0)
-        SliverGrid(
+
+    Widget grid(List<Map<String, dynamic>> list) => SliverGrid(
           delegate: SliverChildBuilderDelegate(
-            (_, i) => _mediaTile(media[i], images),
-            childCount: media.length,
+            (_, i) => _mediaTile(list[i], images),
+            childCount: list.length,
           ),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 3,
             mainAxisSpacing: 2,
             crossAxisSpacing: 2,
           ),
-        )
-      else if (tab == 1)
-        SliverList(
+        );
+
+    final Widget content;
+    switch (tab) {
+      case 'music':
+        content = SliverList(
           delegate: SliverChildBuilderDelegate(
             (_, i) => _musicRow(music[i], music),
             childCount: music.length,
           ),
-        )
-      else
-        SliverList(
+        );
+        break;
+      case 'files':
+        content = SliverList(
           delegate: SliverChildBuilderDelegate(
             (_, i) => Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -567,16 +687,37 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
             childCount: files.length,
           ),
-        ),
+        );
+        break;
+      case 'gifs':
+        content = grid(gifs);
+        break;
+      default:
+        content = grid(media);
+    }
+    return [
+      const SliverToBoxAdapter(child: SizedBox(height: 12)),
+      SliverPersistentHeader(
+        pinned: true,
+        delegate: _PinnedDelegate(height: 46, builder: (_) => _tabs(items, tab)),
+      ),
+      DecoratedSliver(
+        decoration: BoxDecoration(color: context.cardBg),
+        sliver: content,
+      ),
     ];
   }
 
   @override
   Widget build(BuildContext context) {
     final u = _u;
+    final mq = MediaQuery.of(context);
+    final maxH = (mq.size.width * 1.1).clamp(340.0, 520.0).toDouble();
+    final minH = mq.padding.top + kToolbarHeight;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light.copyWith(statusBarColor: Colors.transparent),
       child: Scaffold(
+        backgroundColor: context.chatBg,
         body: u == null
             ? SafeArea(
                 child: Stack(
@@ -600,10 +741,12 @@ class _ProfilePageState extends State<ProfilePage> {
                 children: [
                   CustomScrollView(
                     slivers: [
-                      SliverToBoxAdapter(child: _header(u)),
-                      if (((u['bio'] as String?) ?? '').isNotEmpty)
-                        SliverToBoxAdapter(child: _info(u['bio'] as String, 'Bio')),
-                      SliverToBoxAdapter(child: _info('@${u['username'] ?? ''}', 'Username')),
+                      SliverPersistentHeader(
+                        pinned: true,
+                        delegate: _PinnedDelegate(height: maxH, minHeight: minH, builder: (t) => _header(u, t)),
+                      ),
+                      SliverToBoxAdapter(child: _quickActions(u)),
+                      SliverToBoxAdapter(child: _infoCard(u)),
                       ..._sharedSlivers(),
                       const SliverToBoxAdapter(child: SizedBox(height: 100)),
                     ],
@@ -620,6 +763,30 @@ class _ProfilePageState extends State<ProfilePage> {
       ),
     );
   }
+}
+
+/// هدر چسبنده: builder یه عدد t میگیره (۰ = کاملاً باز، ۱ = کاملاً جمع‌شده)
+class _PinnedDelegate extends SliverPersistentHeaderDelegate {
+  final double height;
+  final double? minHeight;
+  final Widget Function(double t) builder;
+  _PinnedDelegate({required this.height, this.minHeight, required this.builder});
+
+  @override
+  double get maxExtent => height;
+
+  @override
+  double get minExtent => minHeight ?? height;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final range = maxExtent - minExtent;
+    final t = range <= 0 ? 0.0 : (shrinkOffset / range).clamp(0.0, 1.0).toDouble();
+    return builder(t);
+  }
+
+  @override
+  bool shouldRebuild(covariant SliverPersistentHeaderDelegate oldDelegate) => true;
 }
 
 // ===========================================================================
