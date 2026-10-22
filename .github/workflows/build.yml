@@ -39,21 +39,20 @@ jobs:
         working-directory: app
         run: |
           flutter pub get
-          flutter build apk --release --build-number=${{ github.run_number }}
+          flutter build apk --release --no-shrink --build-number=${{ github.run_number }}
 
       - name: Sign with fixed key
         env:
-          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KS_PASS: chatapp-sign-2026
         run: |
           OUT=app/build/app/outputs/flutter-apk
-          if [ -f release.p12 ] && [ -n "$KS_PASS" ]; then
-            APKSIGNER=$(ls $ANDROID_HOME/build-tools/*/apksigner | sort -V | tail -1)
-            "$APKSIGNER" sign --ks release.p12 --ks-pass env:KS_PASS --key-pass env:KS_PASS --ks-key-alias chat --out $OUT/chat.apk $OUT/app-release.apk
-            "$APKSIGNER" verify --print-certs $OUT/chat.apk
-          else
-            echo "WARNING: release.p12 or KEYSTORE_PASSWORD missing - using a temporary key (this APK will NOT update over older installs)"
-            cp $OUT/app-release.apk $OUT/chat.apk
+          if [ ! -f release.p12 ]; then
+            echo "ERROR: release.p12 not found in the repo root. Without it every build gets a different signature and the APK cannot update over the old one."
+            exit 1
           fi
+          APKSIGNER=$(ls $ANDROID_HOME/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" sign --ks release.p12 --ks-pass env:KS_PASS --key-pass env:KS_PASS --ks-key-alias chat --out $OUT/chat.apk $OUT/app-release.apk
+          "$APKSIGNER" verify --print-certs $OUT/chat.apk
 
       - uses: actions/upload-artifact@v4
         with:
