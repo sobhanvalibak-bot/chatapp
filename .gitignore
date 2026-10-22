@@ -1,0 +1,8 @@
+node_modules/
+server/data.json
+server/data.json.tmp
+server/.secret
+app/android/
+app/build/
+app/.dart_tool/
+app/pubspec.lock
