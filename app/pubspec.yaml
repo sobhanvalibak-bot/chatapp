@@ -17,12 +17,18 @@ dependencies:
   image_picker: ^1.0.8
   # --- ارسال فایل، پلیر و مجوزها ---
   file_picker: ^8.1.2
+  # گالری/موزیک داخل شیت انتخاب فایل (شبیه تلگرام)
+  photo_manager: ^3.6.4
   just_audio: ^0.9.40
   just_audio_background: ^0.0.1-beta.17
   permission_handler: ^11.3.1
   device_info_plus: ^10.1.2
+  # نسخه‌ی اپ برای تب Settings
+  package_info_plus: ^8.0.2
   path_provider: ^2.1.3
   open_filex: ^4.5.0
+  # پلیر ویدیو داخل خود اپ
+  video_player: ^2.9.2
 
 dependency_overrides:
   shared_preferences_android: 2.2.4
