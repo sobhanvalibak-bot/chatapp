@@ -15,6 +15,14 @@ dependencies:
   # نسخه‌ی ثابت: نسخه‌های جدید پلاگین (JNI) در بیلد release ارور NoSuchMethodError میدادن
   shared_preferences: 2.2.3
   image_picker: ^1.0.8
+  # --- ارسال فایل، پلیر و مجوزها ---
+  file_picker: ^8.1.2
+  just_audio: ^0.9.40
+  just_audio_background: ^0.0.1-beta.17
+  permission_handler: ^11.3.1
+  device_info_plus: ^10.1.2
+  path_provider: ^2.1.3
+  open_filex: ^4.5.0
 
 dependency_overrides:
   shared_preferences_android: 2.2.4
