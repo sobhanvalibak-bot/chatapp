@@ -12,7 +12,12 @@ dependencies:
   cupertino_icons: ^1.0.6
   http: ^1.2.0
   web_socket_channel: ^2.4.0
-  shared_preferences: ^2.2.2
+  # نسخه‌ی ثابت: نسخه‌های جدید پلاگین (JNI) در بیلد release ارور NoSuchMethodError میدادن
+  shared_preferences: 2.2.3
+  image_picker: ^1.0.8
+
+dependency_overrides:
+  shared_preferences_android: 2.2.4
 
 flutter:
   uses-material-design: true
