@@ -77,7 +77,7 @@ class _HomePageState extends State<HomePage> {
               await showServerDialog(context);
               if (mounted) _load();
             },
-            child: const Text('آدرس سرور'),
+            child: const Text('Server address'),
           ),
           CupertinoActionSheetAction(
             isDestructiveAction: true,
@@ -90,12 +90,12 @@ class _HomePageState extends State<HomePage> {
                 (r) => false,
               );
             },
-            child: const Text('خروج از حساب'),
+            child: const Text('Log out'),
           ),
         ],
         cancelButton: CupertinoActionSheetAction(
           onPressed: () => Navigator.pop(ctx),
-          child: const Text('بستن'),
+          child: const Text('Close'),
         ),
       ),
     );
@@ -143,7 +143,7 @@ class _HomePageState extends State<HomePage> {
                     children: [
                       Expanded(
                         child: Text(
-                          mine ? 'شما: $text' : text,
+                          mine ? 'You: $text' : text,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           textDirection: dirOf(text),
@@ -152,7 +152,7 @@ class _HomePageState extends State<HomePage> {
                       ),
                       if (unread > 0)
                         Container(
-                          margin: const EdgeInsets.only(right: 8),
+                          margin: const EdgeInsets.only(left: 8),
                           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                           decoration: BoxDecoration(
                             color: tgBlue,
@@ -191,7 +191,7 @@ class _HomePageState extends State<HomePage> {
                 setState(() => _loading = true);
                 _load();
               },
-              child: const Text('تلاش دوباره'),
+              child: const Text('Try again'),
             ),
           ],
         ),
@@ -209,7 +209,7 @@ class _HomePageState extends State<HomePage> {
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: 32),
           child: Text(
-            'هنوز گفتگویی ندارید.\nبا دکمه بالا یک گفتگوی جدید شروع کنید.',
+            'No chats yet.\nTap the button at the top to start a new chat.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.grey, height: 1.7),
           ),
@@ -230,7 +230,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('گفتگوها'),
+        title: const Text('Chats'),
         leading: IconButton(
           icon: const Icon(CupertinoIcons.person_crop_circle, size: 26),
           onPressed: _profile,
@@ -247,7 +247,7 @@ class _HomePageState extends State<HomePage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
             child: CupertinoSearchTextField(
-              placeholder: 'جستجو',
+              placeholder: 'Search',
               onChanged: (v) => setState(() => _q = v),
             ),
           ),
@@ -294,13 +294,13 @@ class _NewChatPageState extends State<NewChatPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('گفتگوی جدید')),
+      appBar: AppBar(title: const Text('New chat')),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
             child: CupertinoSearchTextField(
-              placeholder: 'جستجوی نام کاربری',
+              placeholder: 'Search username',
               autofocus: true,
               onChanged: _search,
             ),
@@ -308,7 +308,7 @@ class _NewChatPageState extends State<NewChatPage> {
           if (_loading) const LinearProgressIndicator(minHeight: 2),
           Expanded(
             child: _users.isEmpty && !_loading
-                ? const Center(child: Text('کاربری پیدا نشد', style: TextStyle(color: Colors.grey)))
+                ? const Center(child: Text('No users found', style: TextStyle(color: Colors.grey)))
                 : ListView.separated(
                     itemCount: _users.length,
                     separatorBuilder: (_, __) =>

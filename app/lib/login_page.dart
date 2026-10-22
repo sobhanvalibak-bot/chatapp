@@ -11,7 +11,7 @@ Future<bool> showServerDialog(BuildContext context) async {
   final ok = await showCupertinoDialog<bool>(
     context: context,
     builder: (ctx) => CupertinoAlertDialog(
-      title: const Text('آدرس سرور'),
+      title: const Text('Server address'),
       content: Padding(
         padding: const EdgeInsets.only(top: 12),
         child: CupertinoTextField(
@@ -22,11 +22,11 @@ Future<bool> showServerDialog(BuildContext context) async {
         ),
       ),
       actions: [
-        CupertinoDialogAction(onPressed: () => Navigator.pop(ctx, false), child: const Text('لغو')),
+        CupertinoDialogAction(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
         CupertinoDialogAction(
           isDefaultAction: true,
           onPressed: () => Navigator.pop(ctx, true),
-          child: const Text('ذخیره'),
+          child: const Text('Save'),
         ),
       ],
     ),
@@ -64,14 +64,15 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _submit() async {
+    FocusScope.of(context).unfocus();
     final u = _u.text.trim();
     final p = _p.text;
     if (u.isEmpty || p.isEmpty) {
-      setState(() => _error = 'نام کاربری و رمز عبور را وارد کنید');
+      setState(() => _error = 'Enter username and password');
       return;
     }
     if (_register && p != _p2.text) {
-      setState(() => _error = 'رمز عبور و تکرار آن یکسان نیست');
+      setState(() => _error = 'Passwords do not match');
       return;
     }
     setState(() {
@@ -86,7 +87,10 @@ class _LoginPageState extends State<LoginPage> {
         (r) => false,
       );
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted) {
+        setState(() => _error = e.message);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -112,9 +116,9 @@ class _LoginPageState extends State<LoginPage> {
           children: [
             Positioned(
               top: 4,
-              left: 4,
+              right: 4,
               child: IconButton(
-                tooltip: 'آدرس سرور',
+                tooltip: 'Server address',
                 icon: const Icon(CupertinoIcons.gear, color: Colors.grey),
                 onPressed: () async {
                   if (await showServerDialog(context)) setState(() {});
@@ -142,7 +146,7 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: 20),
                     Text(
-                      _register ? 'ساخت حساب جدید' : 'ورود به حساب',
+                      _register ? 'Create account' : 'Sign in',
                       style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 6),
@@ -158,7 +162,7 @@ class _LoginPageState extends State<LoginPage> {
                       textAlign: TextAlign.left,
                       autocorrect: false,
                       textInputAction: TextInputAction.next,
-                      decoration: _dec('نام کاربری'),
+                      decoration: _dec('Username'),
                     ),
                     const SizedBox(height: 12),
                     TextField(
@@ -171,7 +175,7 @@ class _LoginPageState extends State<LoginPage> {
                         if (!_register) _submit();
                       },
                       decoration: _dec(
-                        'رمز عبور',
+                        'Password',
                         suffix: IconButton(
                           icon: Icon(_hide ? CupertinoIcons.eye : CupertinoIcons.eye_slash,
                               size: 20, color: Colors.grey),
@@ -188,7 +192,7 @@ class _LoginPageState extends State<LoginPage> {
                         textAlign: TextAlign.left,
                         textInputAction: TextInputAction.done,
                         onSubmitted: (_) => _submit(),
-                        decoration: _dec('تکرار رمز عبور'),
+                        decoration: _dec('Repeat password'),
                       ),
                     ],
                     if (_error != null) ...[
@@ -215,7 +219,7 @@ class _LoginPageState extends State<LoginPage> {
                                 height: 22,
                                 child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
                               )
-                            : Text(_register ? 'ثبت‌نام' : 'ورود',
+                            : Text(_register ? 'Sign up' : 'Sign in',
                                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                       ),
                     ),
@@ -227,7 +231,7 @@ class _LoginPageState extends State<LoginPage> {
                                 _register = !_register;
                                 _error = null;
                               }),
-                      child: Text(_register ? 'حساب دارید؟ وارد شوید' : 'حساب ندارید؟ ثبت‌نام کنید'),
+                      child: Text(_register ? 'Have an account? Sign in' : "Don't have an account? Sign up"),
                     ),
                   ],
                 ),

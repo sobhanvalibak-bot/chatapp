@@ -138,7 +138,7 @@ class _ChatPageState extends State<ChatPage> {
             color: Colors.black.withOpacity(0.08),
             borderRadius: BorderRadius.circular(16),
           ),
-          child: const Text('اولین پیام را بفرستید 👋', style: TextStyle(color: Colors.black54)),
+          child: const Text('Send the first message 👋', style: TextStyle(color: Colors.black54)),
         ),
       );
     }
@@ -171,7 +171,7 @@ class _ChatPageState extends State<ChatPage> {
                   maxLines: 5,
                   keyboardType: TextInputType.multiline,
                   decoration: const InputDecoration(
-                    hintText: 'پیام',
+                    hintText: 'Message',
                     border: InputBorder.none,
                     contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   ),

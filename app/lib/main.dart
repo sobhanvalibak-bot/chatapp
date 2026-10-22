@@ -60,8 +60,6 @@ class MyApp extends StatelessWidget {
           TargetPlatform.android: CupertinoPageTransitionsBuilder(),
         }),
       ),
-      builder: (context, child) =>
-          Directionality(textDirection: TextDirection.rtl, child: child ?? const SizedBox()),
       home: Api.loggedIn ? const HomePage() : const LoginPage(),
     );
   }

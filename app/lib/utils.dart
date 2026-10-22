@@ -24,7 +24,7 @@ TextDirection dirOf(String s) {
       return TextDirection.ltr;
     }
   }
-  return TextDirection.rtl;
+  return TextDirection.ltr;
 }
 
 String _two(int n) => n.toString().padLeft(2, '0');
@@ -44,7 +44,7 @@ String fmtTime(int ms) {
       .difference(DateTime(d.year, d.month, d.day))
       .inDays;
   if (diff < 7) {
-    const days = ['دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه', 'شنبه', 'یکشنبه'];
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     return days[d.weekday - 1];
   }
   return '${d.year}/${_two(d.month)}/${_two(d.day)}';

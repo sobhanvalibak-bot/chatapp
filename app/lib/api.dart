@@ -13,7 +13,7 @@ class ApiException implements Exception {
 }
 
 class Api {
-  static String baseUrl = 'http://127.0.0.1:3000';
+  static String baseUrl = 'http://127.0.0.1:3001';
   static String? token;
   static String? username;
   static int? userId;
@@ -52,31 +52,57 @@ class Api {
         if (token != null) 'Authorization': 'Bearer $token',
       };
 
+  // Server error messages are translated to English here.
+  static String? _tr(dynamic e) {
+    if (e is! String) return null;
+    const map = {
+      'نام کاربری باید': 'Username must be 3-32 characters: English letters, numbers or _',
+      'رمز عبور حداقل': 'Password must be at least 6 characters',
+      'قبلاً گرفته': 'This username is already taken',
+      'نام کاربری و رمز عبور را وارد': 'Enter username and password',
+      'اشتباه است': 'Wrong username or password',
+      'تعداد تلاش': 'Too many attempts, try again in a few minutes',
+      'کاربر پیدا نشد': 'User not found',
+      'متن پیام': 'Invalid message text',
+    };
+    for (final k in map.keys) {
+      if (e.contains(k)) return map[k];
+    }
+    return e;
+  }
+
   static Future<dynamic> _req(String method, String path, {Map? body}) async {
+    late http.Response r;
     try {
       final uri = Uri.parse('$baseUrl$path');
-      late http.Response r;
       if (method == 'GET') {
-        r = await http.get(uri, headers: _headers);
+        r = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 10));
       } else {
-        r = await http.post(uri, headers: _headers, body: json.encode(body ?? {}));
+        r = await http
+            .post(uri, headers: _headers, body: json.encode(body ?? {}))
+            .timeout(const Duration(seconds: 10));
       }
-      final text = utf8.decode(r.bodyBytes);
-      final data = text.isEmpty ? null : json.decode(text);
-      if (r.statusCode == 401 && token != null) {
-        await logout();
-        onUnauthorized?.call();
-        throw ApiException('نشست شما منقضی شده، دوباره وارد شوید');
-      }
-      if (r.statusCode >= 400) {
-        throw ApiException((data is Map ? data['error'] : null) ?? 'خطای سرور (${r.statusCode})');
-      }
-      return data;
-    } on ApiException {
-      rethrow;
     } catch (_) {
-      throw ApiException('اتصال به سرور برقرار نشد. آدرس سرور را بررسی کنید.');
+      throw ApiException(
+          'Could not connect to the server ($baseUrl). Make sure the server is running and the address is correct.');
     }
+    dynamic data;
+    try {
+      final text = utf8.decode(r.bodyBytes);
+      data = text.isEmpty ? null : json.decode(text);
+    } catch (_) {
+      throw ApiException(
+          'Unexpected response from $baseUrl (status ${r.statusCode}). Check the server address and port.');
+    }
+    if (r.statusCode == 401 && token != null) {
+      await logout();
+      onUnauthorized?.call();
+      throw ApiException('Session expired, please sign in again');
+    }
+    if (r.statusCode >= 400) {
+      throw ApiException(_tr(data is Map ? data['error'] : null) ?? 'Server error (${r.statusCode})');
+    }
+    return data;
   }
 
   static Future<void> auth(String path, String u, String p) async {
@@ -125,7 +151,7 @@ class Api {
     } catch (_) {}
   }
 
-  // ---- WebSocket (دریافت لحظه‌ای پیام) ----
+  // ---- WebSocket (realtime messages) ----
   static void connectWs() {
     if (token == null) return;
     _wsWanted = true;
