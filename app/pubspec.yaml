@@ -19,6 +19,7 @@ dependencies:
   file_picker: ^8.1.2
   # گالری/موزیک داخل شیت انتخاب فایل (شبیه تلگرام)
   photo_manager: ^3.6.4
+  photo_manager_image_provider: ^2.2.0
   just_audio: ^0.9.40
   just_audio_background: ^0.0.1-beta.17
   permission_handler: ^11.3.1
