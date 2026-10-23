@@ -100,7 +100,7 @@ class _ProfilePageState extends State<ProfilePage> {
   // ---------------------------------------------------------------- header
   Widget _letterBg(Map<String, dynamic> u) {
     final id = (u['id'] as num?)?.toInt() ?? 0;
-    final name = (u['username'] as String?) ?? '?';
+    final name = displayNameOf(u);
     final c = avatarColor(id);
     return Container(
       alignment: Alignment.center,
@@ -299,7 +299,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      u['username'] as String? ?? '',
+                      displayNameOf(u),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -803,6 +803,8 @@ class ProfileEditPage extends StatefulWidget {
 class _ProfileEditPageState extends State<ProfileEditPage> {
   static const int _maxPhotos = 10;
 
+  final _first = TextEditingController();
+  final _last = TextEditingController();
   final _name = TextEditingController();
   final _bio = TextEditingController();
   Map<String, dynamic> _me = {};
@@ -815,6 +817,8 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
   void initState() {
     super.initState();
     _me = Api.me ?? {'id': Api.userId ?? 0, 'username': Api.username ?? ''};
+    _first.text = (_me['firstName'] as String?) ?? '';
+    _last.text = (_me['lastName'] as String?) ?? '';
     _name.text = (_me['username'] as String?) ?? '';
     _bio.text = (_me['bio'] as String?) ?? '';
     _load();
@@ -822,6 +826,8 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
 
   @override
   void dispose() {
+    _first.dispose();
+    _last.dispose();
     _name.dispose();
     _bio.dispose();
     super.dispose();
@@ -833,6 +839,8 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
       if (!mounted) return;
       setState(() {
         _me = d;
+        _first.text = (d['firstName'] as String?) ?? '';
+        _last.text = (d['lastName'] as String?) ?? '';
         _name.text = (d['username'] as String?) ?? '';
         _bio.text = (d['bio'] as String?) ?? '';
         _loading = false;
@@ -1125,6 +1133,8 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
     FocusScope.of(context).unfocus();
     final name = _name.text.trim();
     final bio = _bio.text.trim();
+    final first = _first.text.trim();
+    final last = _last.text.trim();
     if (name.isEmpty) {
       setState(() => _error = 'Username cannot be empty');
       return;
@@ -1137,6 +1147,8 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
       await Api.updateProfile(
         username: name == _me['username'] ? null : name,
         bio: bio == ((_me['bio'] as String?) ?? '') ? null : bio,
+        firstName: first == ((_me['firstName'] as String?) ?? '') ? null : first,
+        lastName: last == ((_me['lastName'] as String?) ?? '') ? null : last,
       );
       if (mounted) Navigator.of(context).pop(true);
     } on ApiException catch (e) {
@@ -1183,6 +1195,20 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
           _sectionTitle('PHOTOS (${userPhotos(_me).length}/$_maxPhotos) — the first one is your main photo'),
           _photosRow(),
           const SizedBox(height: 8),
+          TextField(
+            controller: _first,
+            maxLength: 40,
+            textCapitalization: TextCapitalization.words,
+            decoration: _dec('First name'),
+          ),
+          const SizedBox(height: 4),
+          TextField(
+            controller: _last,
+            maxLength: 40,
+            textCapitalization: TextCapitalization.words,
+            decoration: _dec('Last name'),
+          ),
+          const SizedBox(height: 4),
           TextField(
             controller: _name,
             textDirection: TextDirection.ltr,

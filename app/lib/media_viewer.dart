@@ -25,7 +25,7 @@ List<GalleryImage> galleryFromMessages(List<Map<String, dynamic>> msgs) => msgs
 
 /// عکس‌های پروفایل یه کاربر
 List<GalleryImage> galleryFromUser(Map<String, dynamic> u) => userPhotos(u)
-    .map((p) => GalleryImage('${Api.baseUrl}${p['url']}', (u['username'] as String?) ?? ''))
+    .map((p) => GalleryImage('${Api.baseUrl}${p['url']}', displayNameOf(u)))
     .toList();
 
 void openGallery(BuildContext context, List<GalleryImage> images, int index) {

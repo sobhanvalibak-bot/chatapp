@@ -9,6 +9,7 @@ import 'chat_page.dart';
 import 'permissions_page.dart';
 import 'player.dart';
 import 'profile_page.dart';
+import 'sticker_bot.dart';
 import 'utils.dart';
 
 class HomePage extends StatefulWidget {
@@ -141,6 +142,109 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// آیتم ثابت «Saved Messages» بالای لیست؛ همیشه هست، حتی اگه هنوز پیامی ذخیره نشده
+  Widget _savedTile(Map<String, dynamic>? c) {
+    final last = c?['last'] as Map<String, dynamic>?;
+    final thumb = last == null ? null : previewThumb(last, size: 20);
+    final text = last == null
+        ? 'Forward or send anything here to save it'
+        : msgPreview(last, icon: thumb == null).replaceAll('\n', ' ');
+    return InkWell(
+      onTap: () => _open(Api.userId ?? 0, 'Saved Messages'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            const SavedAvatar(),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Saved Messages',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      if (last != null)
+                        Text(fmtTime(last['createdAt'] as int),
+                            style: TextStyle(fontSize: 12.5, color: context.subText)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      if (thumb != null) ...[thumb, const SizedBox(width: 4)],
+                      Expanded(
+                        child: Text(
+                          text,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textDirection: dirOf(text),
+                          style: TextStyle(fontSize: 14.5, color: context.subText),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// بات «Sticker»؛ تو نتایج سرچ نشون داده میشه و همه میتونن بازش کنن
+  Widget _botTile() {
+    return InkWell(
+      onTap: () async {
+        FocusScope.of(context).unfocus();
+        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StickerBotPage()));
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            const StickerBotAvatar(),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text('Sticker', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(color: tgBlue, borderRadius: BorderRadius.circular(5)),
+                        child: const Text('BOT',
+                            style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Make GIFs and animated emoji packs',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 14.5, color: context.subText),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _tile(Map<String, dynamic> c) {
     final peer = c['peer'] as Map<String, dynamic>;
     final last = c['last'] as Map<String, dynamic>;
@@ -168,7 +272,7 @@ class _HomePageState extends State<HomePage> {
                     children: [
                       Expanded(
                         child: Text(
-                          peer['username'] as String,
+                          displayNameOf(peer),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
@@ -256,14 +360,28 @@ class _HomePageState extends State<HomePage> {
         ),
       );
     }
+    // چت با خودم = Saved Messages؛ جدا از بقیه و ثابت بالای لیست
+    Map<String, dynamic>? saved;
+    final others = <Map<String, dynamic>>[];
+    for (final c in _chats) {
+      if ((c['peer'] as Map)['id'] == Api.userId) {
+        saved = c;
+      } else {
+        others.add(c);
+      }
+    }
     final list = _q.isEmpty
-        ? _chats
-        : _chats
-            .where((c) => ((c['peer'] as Map)['username'] as String)
+        ? others
+        : others
+            .where((c) => ('${displayNameOf(c['peer'] as Map)} ${(c['peer'] as Map)['username']}')
                 .toLowerCase()
                 .contains(_q.toLowerCase()))
             .toList();
-    if (list.isEmpty) {
+    final showSaved = _q.isEmpty || 'saved messages'.contains(_q.toLowerCase());
+    // بات Sticker فقط وقتی سرچ می‌کنیم (اسمش یا بخشی از اسمش)
+    final ql = _q.trim().toLowerCase().replaceAll('@', '');
+    final showBot = ql.isNotEmpty && ('sticker bot'.contains(ql) || ql.contains('sticker'));
+    if (list.isEmpty && !showSaved && !showBot) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -275,13 +393,18 @@ class _HomePageState extends State<HomePage> {
         ),
       );
     }
+    final extra = (showSaved ? 1 : 0) + (showBot ? 1 : 0);
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
         padding: const EdgeInsets.only(bottom: 110),
-        itemCount: list.length,
+        itemCount: list.length + extra,
         separatorBuilder: (_, __) => const Divider(height: 0.5, thickness: 0.5, indent: 78),
-        itemBuilder: (_, i) => _tile(list[i]),
+        itemBuilder: (_, i) {
+          if (showSaved && i == 0) return _savedTile(saved);
+          if (showBot && i == (showSaved ? 1 : 0)) return _botTile();
+          return _tile(list[i - extra]);
+        },
       ),
     );
   }
@@ -384,7 +507,7 @@ class _NewChatPageState extends State<NewChatPage> {
                           ),
                           child: Avatar.fromUser(u, size: 44, showOnline: true),
                         ),
-                        title: Text(u['username'] as String,
+                        title: Text(displayNameOf(u),
                             textDirection: TextDirection.ltr, textAlign: TextAlign.start),
                         subtitle: Text(presenceText(u),
                             style: TextStyle(

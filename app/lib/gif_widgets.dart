@@ -155,7 +155,10 @@ class GifBubble extends StatelessWidget {
 class GifPanel extends StatefulWidget {
   final double height;
   final void Function(Map<String, dynamic> gif) onPick;
-  const GifPanel({super.key, required this.height, required this.onPick});
+
+  /// true = داخل MediaPanel (تب GIF)؛ کادر و ارتفاع رو خود MediaPanel میده
+  final bool embedded;
+  const GifPanel({super.key, required this.height, required this.onPick, this.embedded = false});
 
   @override
   State<GifPanel> createState() => _GifPanelState();
@@ -297,6 +300,20 @@ class _GifPanelState extends State<GifPanel> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.embedded) {
+      return Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+            child: CupertinoSearchTextField(
+              placeholder: 'Search GIFs',
+              onChanged: (v) => setState(() => _q = v),
+            ),
+          ),
+          Expanded(child: _body()),
+        ],
+      );
+    }
     final bottom = MediaQuery.of(context).padding.bottom;
     final dark = context.dark;
     return Container(

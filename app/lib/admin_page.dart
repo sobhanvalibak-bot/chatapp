@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'admin_lotties.dart';
 import 'api.dart';
 import 'chat_page.dart';
 import 'profile_page.dart';
@@ -90,8 +91,16 @@ class _AdminPageState extends State<AdminPage> {
               },
             ),
           ),
+          ListTile(
+            leading: Icon(CupertinoIcons.sparkles, color: tgBlue),
+            title: const Text('Animated emojis'),
+            subtitle: const Text('Add Lottie (.tgs / .json) animations for emojis'),
+            trailing: Icon(CupertinoIcons.chevron_right, size: 16, color: context.subText),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminLottiesPage())),
+          ),
+          const Divider(height: 0.5, thickness: 0.5),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text('${_users.length} users', style: TextStyle(color: context.subText, fontSize: 13)),

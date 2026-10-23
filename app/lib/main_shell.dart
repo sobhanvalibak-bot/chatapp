@@ -419,7 +419,7 @@ class _ProfileTabState extends State<_ProfileTab> {
             child: Avatar(id: Api.userId ?? 0, name: name, size: 104, url: me?['avatar'] as String?),
           ),
           const SizedBox(height: 12),
-          Center(child: Text(name, textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600))),
+          Center(child: Text(displayNameOf(me ?? {}, fallback: name), textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600))),
           Center(child: Text('@$name', textDirection: TextDirection.ltr, style: TextStyle(fontSize: 14.5, color: tgBlue))),
           if (bio.isNotEmpty)
             Padding(
@@ -474,8 +474,18 @@ class _ProfileTabState extends State<_ProfileTab> {
 }
 
 // ---------------------------------------------------------------------------
-// تب Settings (فعلاً «به زودی» + نسخه)
+// تب Settings: ویرایش اسم، فامیلی، یوزرنیم، بیو و عکس پروفایل
 // ---------------------------------------------------------------------------
+class _Field {
+  final String label;
+  final String value;
+  final int maxLen;
+  final int lines;
+  final String? prefix;
+  final bool ltr;
+  const _Field(this.label, this.value, {this.maxLen = 40, this.lines = 1, this.prefix, this.ltr = false});
+}
+
 class _SettingsTab extends StatefulWidget {
   const _SettingsTab();
 
@@ -490,6 +500,18 @@ class _SettingsTabState extends State<_SettingsTab> {
   void initState() {
     super.initState();
     _loadVersion();
+    Api.meTick.addListener(_onMe);
+    Api.refreshMe().catchError((_) => <String, dynamic>{});
+  }
+
+  @override
+  void dispose() {
+    Api.meTick.removeListener(_onMe);
+    super.dispose();
+  }
+
+  void _onMe() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadVersion() async {
@@ -501,18 +523,208 @@ class _SettingsTabState extends State<_SettingsTab> {
     }
   }
 
+  Future<void> _prompt(String title, List<_Field> fields, Future<void> Function(List<String>) onSave) async {
+    final ctrls = [for (final f in fields) TextEditingController(text: f.value)];
+    String? err;
+    bool busy = false;
+    await showDialog<bool>(
+      context: context,
+      builder: (dctx) => StatefulBuilder(
+        builder: (dctx, setD) => AlertDialog(
+          title: Text(title),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < fields.length; i++)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: TextField(
+                      controller: ctrls[i],
+                      autofocus: i == 0,
+                      maxLength: fields[i].maxLen,
+                      minLines: fields[i].lines,
+                      maxLines: fields[i].lines > 1 ? 5 : 1,
+                      autocorrect: !fields[i].ltr,
+                      textDirection: fields[i].ltr ? TextDirection.ltr : null,
+                      decoration: InputDecoration(labelText: fields[i].label, prefixText: fields[i].prefix),
+                    ),
+                  ),
+                if (err != null)
+                  Text(err!, style: const TextStyle(color: Color(0xFFE53935), fontSize: 13)),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: busy ? null : () => Navigator.of(dctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: busy
+                  ? null
+                  : () async {
+                      setD(() {
+                        busy = true;
+                        err = null;
+                      });
+                      try {
+                        await onSave([for (final c in ctrls) c.text.trim()]);
+                        if (dctx.mounted) Navigator.of(dctx).pop(true);
+                      } on ApiException catch (e) {
+                        setD(() {
+                          busy = false;
+                          err = e.message;
+                        });
+                      }
+                    },
+              child: const Text('Save', style: TextStyle(fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      ),
+    );
+    for (final c in ctrls) {
+      c.dispose();
+    }
+    try {
+      await Api.refreshMe();
+    } catch (_) {}
+    if (mounted) setState(() {});
+  }
+
+  void _editName() {
+    final me = Api.me ?? {};
+    _prompt(
+      'Name',
+      [
+        _Field('First name', (me['firstName'] as String?) ?? ''),
+        _Field('Last name', (me['lastName'] as String?) ?? ''),
+      ],
+      (v) async {
+        await Api.updateProfile(firstName: v[0], lastName: v[1]);
+      },
+    );
+  }
+
+  void _editUsername() {
+    final me = Api.me ?? {};
+    final cur = (me['username'] as String?) ?? Api.username ?? '';
+    _prompt(
+      'Username',
+      [_Field('Username', cur, maxLen: 32, prefix: '@', ltr: true)],
+      (v) async {
+        if (v[0].isEmpty) throw ApiException('Username cannot be empty');
+        if (v[0] != cur) await Api.updateProfile(username: v[0]);
+      },
+    );
+  }
+
+  void _editBio() {
+    final me = Api.me ?? {};
+    _prompt(
+      'Bio',
+      [_Field('Bio', (me['bio'] as String?) ?? '', maxLen: 200, lines: 3)],
+      (v) async {
+        await Api.updateProfile(bio: v[0]);
+      },
+    );
+  }
+
+  Future<void> _openEditPage() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ProfileEditPage()));
+    try {
+      await Api.refreshMe();
+    } catch (_) {}
+    if (mounted) setState(() {});
+  }
+
+  Widget _tile(IconData icon, String label, String value, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        child: Row(
+          children: [
+            Icon(icon, size: 22, color: tgBlue),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(value,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textDirection: dirOf(value),
+                      style: const TextStyle(fontSize: 16.5)),
+                  const SizedBox(height: 2),
+                  Text(label, style: TextStyle(fontSize: 13, color: context.subText)),
+                ],
+              ),
+            ),
+            Icon(CupertinoIcons.chevron_forward, size: 16, color: context.subText),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _section(String t) => Padding(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 6),
+        child: Text(t, style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: context.subText)),
+      );
+
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+    final me = Api.me ?? {'id': Api.userId ?? 0, 'username': Api.username ?? ''};
+    final username = (me['username'] as String?) ?? Api.username ?? '';
+    final full = displayNameOf(me, fallback: username);
+    final first = ((me['firstName'] as String?) ?? '').trim();
+    final last = ((me['lastName'] as String?) ?? '').trim();
+    final nameValue = '$first $last'.trim();
+    final bio = ((me['bio'] as String?) ?? '').trim();
+    return SafeArea(
+      bottom: false,
+      child: ListView(
+        padding: const EdgeInsets.only(top: 18, bottom: 110),
         children: [
-          Icon(CupertinoIcons.settings, size: 52, color: context.subText),
+          Center(
+            child: GestureDetector(
+              onTap: _openEditPage,
+              child: Avatar.fromUser(me, size: 96),
+            ),
+          ),
           const SizedBox(height: 12),
-          const Text('Coming soon', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
-          Text(_version, style: TextStyle(fontSize: 14, color: context.subText)),
-          const SizedBox(height: 90),
+          Center(child: Text(full, textDirection: dirOf(full), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600))),
+          Center(child: Text('@$username', textDirection: TextDirection.ltr, style: TextStyle(fontSize: 14.5, color: context.subText))),
+          Center(
+            child: TextButton(
+              onPressed: _openEditPage,
+              child: const Text('Change profile photo', style: TextStyle(fontSize: 15)),
+            ),
+          ),
+          _section('ACCOUNT'),
+          _tile(CupertinoIcons.person_fill, 'Name', nameValue.isEmpty ? 'Not set' : nameValue, _editName),
+          const Divider(height: 0.5, thickness: 0.5, indent: 56),
+          _tile(CupertinoIcons.at, 'Username', '@$username', _editUsername),
+          const Divider(height: 0.5, thickness: 0.5, indent: 56),
+          _tile(CupertinoIcons.info_circle_fill, 'Bio', bio.isEmpty ? 'Add a few words about yourself' : bio, _editBio),
+          const Divider(height: 0.5, thickness: 0.5, indent: 56),
+          _tile(CupertinoIcons.photo_fill_on_rectangle_fill, 'Profile photos, music and more', 'Edit profile', _openEditPage),
+          // فقط برای ادمین‌ها نمایش داده میشه
+          if (Api.isAdmin) ...[
+            _section('ADMIN'),
+            _tile(
+              CupertinoIcons.lock_shield_fill,
+              'Manage users and invite codes',
+              'Admin panel',
+              () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminPage())),
+            ),
+          ],
+          Padding(
+            padding: const EdgeInsets.only(top: 26),
+            child: Center(child: Text(_version, style: TextStyle(fontSize: 13.5, color: context.subText))),
+          ),
         ],
       ),
     );

@@ -10,10 +10,13 @@ import 'package:flutter/services.dart';
 
 import 'api.dart';
 import 'attheme.dart';
+import 'ce_text.dart';
+import 'custom_emoji.dart';
 import 'attach_sheet.dart';
 import 'msg_menu.dart';
 import 'file_widgets.dart';
 import 'gif_widgets.dart';
+import 'lottie_emoji.dart';
 import 'permissions_page.dart';
 import 'player.dart';
 import 'profile_page.dart';
@@ -41,7 +44,7 @@ class ChatPage extends StatefulWidget {
 
 class _ChatPageState extends State<ChatPage> {
   final List<Map<String, dynamic>> _msgs = [];
-  final _ctrl = TextEditingController();
+  final _ctrl = LottieTextController();
   final _sc = ScrollController();
   final Map<int, GlobalKey> _keys = {};
   final Map<int, GlobalKey> _bubKeys = {};
@@ -56,11 +59,22 @@ class _ChatPageState extends State<ChatPage> {
   final MsgRecorder _rec = MsgRecorder();
   final GlobalKey _actionKey = GlobalKey();
   bool _gifOpen = false; // پنل گیف‌ها باز هست؟
+  // جستجو داخل همین چت
+  bool _searching = false;
+  String _q = '';
+  final _searchCtrl = TextEditingController();
+  // هدر و نوار پایین شناورن؛ ارتفاعشون اندازه‌گیری میشه تا لیست زیرشون کنار نره
+  final GlobalKey _topKey = GlobalKey();
+  final GlobalKey _botKey = GlobalKey();
+  double _topH = 70;
+  double _botH = 70;
 
   @override
   void initState() {
     super.initState();
     _peer = {'id': widget.peerId, 'username': widget.peerName};
+    LottieStore.load(); // ایموجی‌های متحرک
+    PackStore.load(); // پک‌های ایموجی کاستوم
     _load();
     _loadPeer();
     _sub = Api.events.listen(_onEvent);
@@ -72,11 +86,15 @@ class _ChatPageState extends State<ChatPage> {
     _sub?.cancel();
     _rec.dispose();
     _ctrl.dispose();
+    _searchCtrl.dispose();
     _sc.dispose();
     super.dispose();
   }
 
   bool _mineMsg(Map<String, dynamic> m) => m['from'] == Api.userId;
+
+  /// چت با خودم = Saved Messages
+  bool get _isSelf => widget.peerId == Api.userId;
   bool _inThisChat(Map m) => m['from'] == widget.peerId || m['to'] == widget.peerId;
 
   void _onEvent(Map<String, dynamic> e) {
@@ -94,6 +112,9 @@ class _ChatPageState extends State<ChatPage> {
       case 'react':
         final m2 = Map<String, dynamic>.from(e['message'] as Map);
         if (_inThisChat(m2)) _replace(m2);
+        break;
+      case 'clear':
+        if (_inThisChat(e)) setState(() => _msgs.clear());
         break;
       case 'delete':
         if (_inThisChat(e)) {
@@ -524,7 +545,7 @@ class _ChatPageState extends State<ChatPage> {
         if (isGifMsg(m)) MsgMenuAction('Add to GIFs', Icons.gif_box_outlined, () => _addGif(m)),
         if (((m['text'] as String?) ?? '').isNotEmpty)
           MsgMenuAction('Copy', CupertinoIcons.doc_on_doc, () {
-            Clipboard.setData(ClipboardData(text: m['text'] as String));
+            Clipboard.setData(ClipboardData(text: stripCe(m['text'] as String)));
           }),
         MsgMenuAction(m['pinned'] == true ? 'Unpin' : 'Pin',
             m['pinned'] == true ? CupertinoIcons.pin_slash : CupertinoIcons.pin, () => _togglePin(m)),
@@ -535,6 +556,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _openProfile() {
+    if (_isSelf) return; // Saved Messages پروفایل نداره
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ProfilePage(userId: widget.peerId, initial: _peer, fromChat: true),
@@ -571,7 +593,7 @@ class _ChatPageState extends State<ChatPage> {
     final m = list[i];
     final text = msgPreview(m).replaceAll('\n', ' ');
     return Material(
-      color: context.barBg,
+      color: context.barBg.withOpacity(0.72),
       child: InkWell(
         onTap: () {
           _jumpTo(m['id'] as int);
@@ -661,7 +683,7 @@ class _ChatPageState extends State<ChatPage> {
           if (text.isNotEmpty)
             Align(
               alignment: dirOf(text) == TextDirection.rtl ? Alignment.centerRight : Alignment.centerLeft,
-              child: Text(text, textDirection: dirOf(text), style: TextStyle(fontSize: 16, height: 1.3, color: mine ? context.msgTextOut : context.msgTextIn)),
+              child: EmojiText(text: text, textDirection: dirOf(text), style: TextStyle(fontSize: 16, height: 1.3, color: mine ? context.msgTextOut : context.msgTextIn)),
             ),
           _reactionChips(m),
           const SizedBox(height: 2),
@@ -734,11 +756,11 @@ class _ChatPageState extends State<ChatPage> {
 
   /// کادر نقل‌قول بالای پیام ریپلای‌شده
   Widget _replyQuote(Map reply, bool mine) {
-    final text = ((reply['text'] as String?) ?? '').replaceAll('\n', ' ');
+    final text = stripCe((reply['text'] as String?) ?? '').replaceAll('\n', ' ');
     final from = reply['from'];
     final name = from == null
         ? ''
-        : (from == Api.userId ? 'You' : ((_peer['username'] as String?) ?? widget.peerName));
+        : (from == Api.userId ? 'You' : (displayNameOf(_peer, fallback: widget.peerName)));
     final accent = mine ? context.tickRead : tgBlue;
     final id = reply['id'];
     return Padding(
@@ -940,16 +962,32 @@ class _ChatPageState extends State<ChatPage> {
         ),
       );
     }
+    final searching = _searching && _q.isNotEmpty;
+    final src = searching ? _msgs.where(_matches).toList() : _msgs;
+    final pend = searching ? <_Pending>[] : _pending;
+    if (searching && src.isEmpty) {
+      return Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(context.dark ? 0.25 : 0.08),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Text('No messages found',
+              style: TextStyle(color: context.dark ? Colors.white70 : Colors.black54)),
+        ),
+      );
+    }
     return ListView.builder(
       controller: _sc,
       reverse: true,
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: _msgs.length + _pending.length,
+      padding: EdgeInsets.fromLTRB(0, _topH + 8, 0, _botH + 8),
+      itemCount: src.length + pend.length,
       itemBuilder: (_, i) {
-        if (i < _pending.length) return _pendingBubble(_pending[_pending.length - 1 - i]);
-        final idx = _msgs.length - 1 - (i - _pending.length);
-        final m = _msgs[idx];
-        final showDay = idx == 0 || _dayKey(_msgs[idx - 1]) != _dayKey(m);
+        if (i < pend.length) return _pendingBubble(pend[pend.length - 1 - i]);
+        final idx = src.length - 1 - (i - pend.length);
+        final m = src[idx];
+        final showDay = idx == 0 || _dayKey(src[idx - 1]) != _dayKey(m);
         if (!showDay) return _bubble(m);
         return Column(children: [_dayChip(m), _bubble(m)]);
       },
@@ -959,7 +997,7 @@ class _ChatPageState extends State<ChatPage> {
   Widget _editBar() {
     final ed = _editing;
     if (ed == null) return const SizedBox.shrink();
-    final text = (ed['text'] as String).replaceAll('\n', ' ');
+    final text = stripCe(ed['text'] as String).replaceAll('\n', ' ');
     return Container(
       color: context.barBg,
       padding: const EdgeInsets.fromLTRB(14, 8, 6, 0),
@@ -991,7 +1029,7 @@ class _ChatPageState extends State<ChatPage> {
     final rp = _replying;
     if (rp == null) return const SizedBox.shrink();
     final text = msgPreview(rp).replaceAll('\n', ' ');
-    final name = _mineMsg(rp) ? 'You' : ((_peer['username'] as String?) ?? widget.peerName);
+    final name = _mineMsg(rp) ? 'You' : (displayNameOf(_peer, fallback: widget.peerName));
     return Container(
       color: context.barBg,
       padding: const EdgeInsets.fromLTRB(14, 8, 6, 0),
@@ -1218,52 +1256,340 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  // ------------------------------------------------------------ جستجو / تاریخچه
+  bool _matches(Map<String, dynamic> m) {
+    final q = _q.toLowerCase();
+    final t = ((m['text'] as String?) ?? '').toLowerCase();
+    return t.contains(q) || msgPreview(m).toLowerCase().contains(q);
+  }
+
+  void _startSearch() {
+    if (_searching) return;
+    HapticFeedback.mediumImpact();
+    setState(() => _searching = true);
+  }
+
+  void _closeSearch() {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _searching = false;
+      _q = '';
+      _searchCtrl.clear();
+    });
+  }
+
+  Future<void> _clearHistory(bool everyone) async {
+    try {
+      await Api.clearHistory(widget.peerId, everyone: everyone);
+      if (!mounted) return;
+      setState(() => _msgs.clear());
+    } on ApiException catch (e) {
+      _snack(e.message);
+    }
+  }
+
+  void _confirmClear() {
+    final name = _isSelf ? 'Saved Messages' : displayNameOf(_peer, fallback: widget.peerName);
+    showDialog<void>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        title: const Text('Delete history'),
+        content: Text(_isSelf ? 'Delete all saved messages?' : 'Delete all messages with $name?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dctx).pop(), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () {
+              Navigator.of(dctx).pop();
+              _clearHistory(false);
+            },
+            child: const Text('Delete for me'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(dctx).pop();
+              _clearHistory(true);
+            },
+            child: const Text('Delete for everyone', style: TextStyle(color: Color(0xFFE53935))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------ هدر شناور
+  Widget _menuButton() {
+    const red = Color(0xFFE53935);
+    return PopupMenuButton<String>(
+      tooltip: 'More',
+      offset: const Offset(0, 54),
+      color: context.dark ? const Color(0xF21C2733) : const Color(0xF2FFFFFF),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      onSelected: (v) {
+        if (v == 'search') {
+          _startSearch();
+        } else if (v == 'clear') {
+          _confirmClear();
+        }
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem<String>(
+          value: 'search',
+          child: Row(children: [
+            Icon(CupertinoIcons.search, size: 20, color: context.mainText),
+            const SizedBox(width: 12),
+            const Text('Search'),
+          ]),
+        ),
+        const PopupMenuItem<String>(
+          value: 'clear',
+          child: Row(children: [
+            Icon(CupertinoIcons.delete, size: 20, color: red),
+            SizedBox(width: 12),
+            Text('Delete history', style: TextStyle(color: red)),
+          ]),
+        ),
+      ],
+      child: _glassCircle(child: Icon(CupertinoIcons.ellipsis, color: context.mainText, size: 22)),
+    );
+  }
+
+  Widget _searchField() {
+    return Row(
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 14),
+          child: Icon(CupertinoIcons.search, size: 20, color: context.subText),
+        ),
+        Expanded(
+          child: TextField(
+            controller: _searchCtrl,
+            autofocus: true,
+            textInputAction: TextInputAction.search,
+            style: const TextStyle(fontSize: 17),
+            onChanged: (v) => setState(() => _q = v.trim()),
+            decoration: InputDecoration(
+              hintText: 'Search in this chat',
+              hintStyle: TextStyle(fontSize: 17, color: context.subText),
+              filled: false,
+              isDense: true,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+            ),
+          ),
+        ),
+        if (_q.isNotEmpty)
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              _searchCtrl.clear();
+              setState(() => _q = '');
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Icon(CupertinoIcons.xmark_circle_fill, size: 20, color: context.subText),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// هدر: دایره‌ی عکس | مستطیل گرد (اسم + وضعیت؛ نگه داشتن = سرچ) | دایره‌ی سه‌نقطه
+  Widget _header(bool online) {
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+        child: Row(
+          children: [
+            _glassCircle(
+              onTap: _openProfile,
+              child: _isSelf ? const SavedAvatar(size: 44) : Avatar.fromUser(_peer, size: 44),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _searching ? null : _openProfile,
+                onLongPress: _searching ? null : _startSearch,
+                child: _pill(
+                  _searching
+                      ? _searchField()
+                      : Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _isSelf ? 'Saved Messages' : displayNameOf(_peer, fallback: widget.peerName),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+                              ),
+                              if (!_isSelf && _peer.containsKey('lastSeen'))
+                                Text(
+                                  presenceText(_peer),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    color: online ? tgBlue : context.subText,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            _searching
+                ? _glassCircle(
+                    onTap: _closeSearch,
+                    child: Icon(CupertinoIcons.xmark, size: 20, color: context.mainText),
+                  )
+                : _menuButton(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _measure() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final t = _topKey.currentContext?.size?.height;
+      final b = _botKey.currentContext?.size?.height;
+      final ct = t != null && (t - _topH).abs() > 0.5;
+      final cb = b != null && (b - _botH).abs() > 0.5;
+      if (ct || cb) {
+        setState(() {
+          if (t != null) _topH = t;
+          if (b != null) _botH = b;
+        });
+      }
+    });
+  }
+
+  Widget _floating(Widget child) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: ClipRRect(borderRadius: BorderRadius.circular(18), child: child),
+      );
+
   @override
   Widget build(BuildContext context) {
+    _measure();
     final online = _peer['online'] == true;
     return PopScope(
-      canPop: !_gifOpen,
+      canPop: !_gifOpen && !_searching,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _gifOpen) setState(() => _gifOpen = false);
+        if (didPop) return;
+        if (_gifOpen) {
+          setState(() => _gifOpen = false);
+        } else if (_searching) {
+          _closeSearch();
+        }
       },
       child: Scaffold(
-      backgroundColor: context.chatBg,
-      appBar: AppBar(
-        backgroundColor: context.barBg.withOpacity(0.78),
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        flexibleSpace: ClipRect(
-          child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20), child: const SizedBox.expand()),
-        ),
-        centerTitle: false,
-        titleSpacing: 0,
-        title: InkWell(
-          onTap: _openProfile,
-          child: Row(
+        backgroundColor: context.chatBg,
+        body: Container(
+          decoration: AtTheme.chatDecoration(context.chatBg) ?? BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: context.dark
+                  ? const [Color(0xFF0E1621), Color(0xFF131B2E), Color(0xFF1A1530)]
+                  : const [Color(0xFFE7EBF0), Color(0xFFE3E9F4), Color(0xFFEBE3F0)],
+            ),
+          ),
+          child: Stack(
+            fit: StackFit.expand,
             children: [
-              Avatar.fromUser(_peer, size: 38),
-              const SizedBox(width: 10),
-              Expanded(
+              // پیام‌ها تمام صفحه‌ان و پشت هدر و نوار پایین دیده میشن
+              Positioned.fill(child: _list()),
+              // لایه‌های ضبط ویس/ویدیو (بین هدر و نوار پایین)
+              Positioned(
+                left: 0,
+                right: 0,
+                top: _topH,
+                bottom: _botH,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: AnimatedBuilder(
+                          animation: _rec,
+                          builder: (_, __) => Stack(
+                            children: [
+                              Positioned.fill(child: RoundRecordOverlay(rec: _rec)),
+                              Positioned.fill(child: LockHint(rec: _rec)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    // دکمه‌های قابل لمس حین ضبط (چراغ قوه / دوربین / مکث)
+                    Positioned.fill(
+                      child: AnimatedBuilder(
+                        animation: _rec,
+                        builder: (_, __) => Stack(
+                          children: [
+                            Positioned.fill(
+                              child: RoundTools(
+                                rec: _rec,
+                                onFlip: () {
+                                  final now = _rec.flipCamera();
+                                  if (!now) _snack('Camera will switch for your next video message');
+                                },
+                              ),
+                            ),
+                            Positioned.fill(child: PauseButton(rec: _rec)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // بالا: هدر شناور (+ پین و مینی‌پلیر)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  key: _topKey,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      (_peer['username'] as String?) ?? widget.peerName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-                    ),
-                    if (_peer.containsKey('lastSeen'))
-                      Text(
-                        presenceText(_peer),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w400,
-                          color: online ? tgBlue : context.subText,
+                    _header(online),
+                    if (!_searching && _pinned.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: _floating(
+                          BackdropFilter(filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16), child: _pinBanner()),
                         ),
+                      ),
+                    _floating(const MiniPlayer()),
+                  ],
+                ),
+              ),
+              // پایین: نوار تایپ شناور
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Column(
+                  key: _botKey,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _floating(_editBar()),
+                    _floating(_replyBar()),
+                    _inputBar(),
+                    if (_gifOpen)
+                      MediaPanel(
+                        height: MediaQuery.of(context).size.height * 0.36,
+                        onPickGif: _sendGif,
+                        onPickEmoji: (e) => insertAtCursor(_ctrl, e),
                       ),
                   ],
                 ),
@@ -1271,72 +1597,6 @@ class _ChatPageState extends State<ChatPage> {
             ],
           ),
         ),
-      ),
-      body: Container(
-        decoration: AtTheme.chatDecoration(context.chatBg) ?? BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: context.dark
-                ? const [Color(0xFF0E1621), Color(0xFF131B2E), Color(0xFF1A1530)]
-                : const [Color(0xFFE7EBF0), Color(0xFFE3E9F4), Color(0xFFEBE3F0)],
-          ),
-        ),
-        child: Column(
-        children: [
-          _pinBanner(),
-          const MiniPlayer(),
-          Expanded(
-            child: Stack(
-              children: [
-                _list(),
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: AnimatedBuilder(
-                      animation: _rec,
-                      builder: (_, __) => Stack(
-                        children: [
-                          Positioned.fill(child: RoundRecordOverlay(rec: _rec)),
-                          Positioned.fill(child: LockHint(rec: _rec)),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                // دکمه‌های قابل لمس حین ضبط (چراغ قوه / دوربین / مکث)
-                Positioned.fill(
-                  child: AnimatedBuilder(
-                    animation: _rec,
-                    builder: (_, __) => Stack(
-                      children: [
-                        Positioned.fill(
-                          child: RoundTools(
-                            rec: _rec,
-                            onFlip: () {
-                              final now = _rec.flipCamera();
-                              if (!now) _snack('Camera will switch for your next video message');
-                            },
-                          ),
-                        ),
-                        Positioned.fill(child: PauseButton(rec: _rec)),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          _editBar(),
-          _replyBar(),
-          _inputBar(),
-          if (_gifOpen)
-            GifPanel(
-              height: MediaQuery.of(context).size.height * 0.36,
-              onPick: _sendGif,
-            ),
-        ],
-      ),
-      ),
       ),
     );
   }

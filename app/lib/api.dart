@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -222,6 +223,8 @@ class Api {
   static String? _tr(dynamic e) {
     if (e is! String) return null;
     const map = {
+      'First name must': 'First name must be at most 40 characters',
+      'Last name must': 'Last name must be at most 40 characters',
       'نام کاربری باید': 'Username must be 3-32 characters: English letters, numbers or _',
       'رمز عبور حداقل': 'Password must be at least 6 characters',
       'قبلاً گرفته': 'This username is already taken',
@@ -385,10 +388,12 @@ class Api {
     return d;
   }
 
-  static Future<Map<String, dynamic>> updateProfile({String? username, String? bio}) async {
+  static Future<Map<String, dynamic>> updateProfile({String? username, String? bio, String? firstName, String? lastName}) async {
     final body = <String, dynamic>{};
     if (username != null) body['username'] = username;
     if (bio != null) body['bio'] = bio;
+    if (firstName != null) body['firstName'] = firstName;
+    if (lastName != null) body['lastName'] = lastName;
     final d = _map(await _req('PATCH', '/me', body: body));
     await _applyMe(d);
     return d;
@@ -472,6 +477,11 @@ class Api {
   /// everyone = true → برای هر دو طرف (فقط پیام‌های خودم)
   static Future<void> deleteMessage(int id, {required bool everyone}) async {
     await _req('DELETE', '/message/$id${everyone ? '?all=1' : ''}');
+  }
+
+  /// پاک کردن کل تاریخچه‌ی یه گفتگو (everyone = true → برای هر دو طرف)
+  static Future<void> clearHistory(int peer, {required bool everyone}) async {
+    await _req('DELETE', '/chat/$peer${everyone ? '?all=1' : ''}');
   }
 
   static Future<Map<String, dynamic>> pinMessage(int id, bool pinned) async =>
@@ -590,6 +600,85 @@ class Api {
   }
 
   static Future<void> deleteGif(String id) async => _req('DELETE', '/me/gifs/$id');
+
+  // ---- ایموجی‌های متحرک (Lottie) ----
+  static Future<List<Map<String, dynamic>>> lotties() async => _list(await _req('GET', '/lotties'));
+
+  /// خود فایل JSON انیمیشن (با توکن)
+  static Future<Uint8List> lottieBytes(String id) async {
+    try {
+      final r = await http
+          .get(Uri.parse('$baseUrl/lotties/$id/file'), headers: {'Authorization': 'Bearer $token'})
+          .timeout(const Duration(seconds: 20));
+      if (r.statusCode != 200) throw ApiException('Could not load the animation (${r.statusCode})');
+      return r.bodyBytes;
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw ApiException('Could not load the animation. Check your connection to $baseUrl.');
+    }
+  }
+
+  /// فقط ادمین. data = JSON انیمیشن (یا tgs)
+  static Future<Map<String, dynamic>> adminAddLottie(String name, String emoji, Uint8List data) async =>
+      _map(await _req('POST', '/admin/lotties',
+          body: {'name': name, 'emoji': emoji, 'data': base64Encode(data)}, timeout: 60));
+
+  static Future<void> adminDeleteLottie(String id) async {
+    await _req('DELETE', '/admin/lotties/$id');
+  }
+
+  // ---- بات Sticker: گیف‌ساز و پک ایموجی‌های کاستوم ----
+
+  /// ویدیو رو آپلود میکنه؛ سرور تبدیلش میکنه به گیف و تو «گیف‌های من» ذخیره میکنه
+  static Future<Map<String, dynamic>> stickerGif(String path, String name,
+          {void Function(double)? onProgress, UploadCancel? cancel}) =>
+      _postFile('/sticker/gif', path, name, onProgress: onProgress, cancel: cancel);
+
+  static Future<Map<String, dynamic>> packStart(String title) async =>
+      _map(await _req('POST', '/packs/draft', body: {'title': title}));
+
+  /// یک ایموجی (فایل tgs + ایموجی) به پک در حال ساخت اضافه میکنه
+  static Future<Map<String, dynamic>> packAddItem(String emoji, Uint8List data) async =>
+      _map(await _req('POST', '/packs/draft/item', body: {'emoji': emoji, 'data': base64Encode(data)}, timeout: 60));
+
+  static Future<Map<String, dynamic>> packPublish() async =>
+      _map(await _req('POST', '/packs/draft/publish', timeout: 30));
+
+  static Future<void> packCancel() async {
+    await _req('DELETE', '/packs/draft');
+  }
+
+  static Future<Map<String, dynamic>> packInfo(String id) async => _map(await _req('GET', '/packs/$id'));
+
+  static Future<List<Map<String, dynamic>>> myPacks() async => _list(await _req('GET', '/me/packs'));
+
+  static Future<void> addPack(String id) async {
+    await _req('POST', '/me/packs/$id');
+  }
+
+  static Future<void> removePack(String id) async {
+    await _req('DELETE', '/me/packs/$id');
+  }
+
+  static Future<void> deletePack(String id) async {
+    await _req('DELETE', '/packs/$id');
+  }
+
+  /// انیمیشن (JSON) یک ایموجی کاستوم
+  static Future<Uint8List> cemojiBytes(String id) async {
+    try {
+      final r = await http
+          .get(Uri.parse('$baseUrl/cemoji/$id/file'), headers: {'Authorization': 'Bearer $token'})
+          .timeout(const Duration(seconds: 20));
+      if (r.statusCode != 200) throw ApiException('Could not load the animation (${r.statusCode})');
+      return r.bodyBytes;
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw ApiException('Could not load the animation. Check your connection to $baseUrl.');
+    }
+  }
 
   static Future<Map<String, dynamic>> sendGif(int peer, String gifId, {int? replyTo}) async =>
       _map(await _req('POST', '/messages/$peer/gif', body: {'gifId': gifId, if (replyTo != null) 'replyTo': replyTo}));

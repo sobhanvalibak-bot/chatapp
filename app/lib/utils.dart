@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'attheme.dart';
+import 'ce_text.dart';
 
 const _tgBlueDefault = Color(0xFF3390EC);
 
@@ -58,6 +60,8 @@ extension Pal on BuildContext {
 
 /// جهت متن را از اولین حرف معنادار تشخیص می‌دهد (فارسی/عربی → راست‌به‌چپ)
 TextDirection dirOf(String s) {
+  // توکن ایموجی کاستوم حرف لاتین داره؛ نباید روی تشخیص جهت اثر بذاره
+  if (s.contains('\u2063')) s = s.replaceAll(ceRe, '');
   for (final r in s.runes) {
     if ((r >= 0x0590 && r <= 0x08FF) || (r >= 0xFB1D && r <= 0xFEFF)) {
       return TextDirection.rtl;
@@ -128,7 +132,7 @@ class Avatar extends StatelessWidget {
   /// از روی map کاربر (id, username, avatar, online)
   Avatar.fromUser(Map<String, dynamic> u, {super.key, this.size = 54, bool showOnline = false})
       : id = (u['id'] as num?)?.toInt() ?? 0,
-        name = (u['username'] as String?) ?? '?',
+        name = displayNameOf(u),
         url = u['avatar'] as String?,
         online = showOnline && u['online'] == true;
 
@@ -309,7 +313,7 @@ Widget? previewThumb(Map m, {double size = 20}) {
 /// متن کوتاه یک پیام برای لیست گفتگوها / بنر پین
 /// icon=false → برای عکس/ویدیو/گیف فقط اسم («Photo») بدون ایموجی
 String msgPreview(Map m, {bool icon = true}) {
-  final text = ((m['text'] as String?) ?? '').trim();
+  final text = stripCe(((m['text'] as String?) ?? '').trim());
   final f = fileOf(m);
   if (f == null) return text;
   String label;
@@ -366,4 +370,39 @@ Map<String, dynamic>? profileMusicMsg(Map u) {
     'text': '',
     'file': Map<String, dynamic>.from(m),
   };
+}
+
+
+/// اسم نمایشی: اسم + فامیلی؛ اگه نبود یوزرنیم
+String displayNameOf(Map u, {String? fallback}) {
+  final f = ((u['firstName'] as String?) ?? '').trim();
+  final l = ((u['lastName'] as String?) ?? '').trim();
+  final full = '$f $l'.trim();
+  if (full.isNotEmpty) return full;
+  return (u['username'] as String?) ?? fallback ?? '?';
+}
+
+
+/// آواتار «Saved Messages»: دایره‌ی آبی با آیکن بوکمارک
+class SavedAvatar extends StatelessWidget {
+  final double size;
+  const SavedAvatar({super.key, this.size = 54});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF59B5F5), Color(0xFF2E8EE0)],
+        ),
+      ),
+      child: Icon(CupertinoIcons.bookmark_fill, color: Colors.white, size: size * 0.46),
+    );
+  }
 }
