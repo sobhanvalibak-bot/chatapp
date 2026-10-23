@@ -36,6 +36,8 @@ dependencies:
   camera: ^0.11.0
   # باز کردن Termux از صفحه‌ی Offline
   android_intent_plus: ^5.2.0
+  # ایموجی‌های متحرک (Lottie / TGS)
+  lottie: ^3.1.2
 
 dependency_overrides:
   shared_preferences_android: 2.2.4
