@@ -255,11 +255,6 @@ class _StickerBotPageState extends State<StickerBotPage> {
     _add(_Msg(true, 'file', text: '📎 $name'));
     try {
       final f = File(path);
-      final len = await f.length();
-      if (len > 2 * 1024 * 1024) {
-        _bot('That file is too large. A .tgs file should be under 2 MB.\n\nSend another file.');
-        return;
-      }
       final bytes = await f.readAsBytes();
       final gz = bytes.length > 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
       final jsonLike = bytes.isNotEmpty && bytes[0] == 0x7b; // '{'
