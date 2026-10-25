@@ -2,7 +2,8 @@ name: Build Android APK
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
+    paths: ["chatapp.zip", ".github/workflows/build.yml"]
   workflow_dispatch:
 
 jobs:
@@ -11,159 +12,107 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Unzip project
+        run: |
+          unzip -q chatapp.zip -d src
+          # اگه زیپ یه پوشه‌ی بیرونی داشت (مثلا chatapp/)، همونو پیدا کن
+          if [ ! -d src/app ]; then
+            d=$(dirname "$(find src -maxdepth 3 -type d -name app | head -1)")
+            mv "$d" src_fixed && rm -rf src && mv src_fixed src
+          fi
+          ls src
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      - name: Generate Android project files
-        working-directory: app
+      - name: Create android scaffold
+        working-directory: src/app
+        run: flutter create . --platforms=android --project-name chat_app --org com.example
+
+      - name: Patch manifest and minSdk
+        working-directory: src/app/android/app
         run: |
-          flutter create --platforms=android --org com.example --project-name chat_app .
-          rm -rf test
-
-      - name: Patch AndroidManifest and MainActivity
-        working-directory: app
-        run: |
-          python3 - <<'PY'
-          import glob, re, sys
-
-          # ---- AndroidManifest: مجوزها + سرویس مدیا سشن ----
-          p = 'android/app/src/main/AndroidManifest.xml'
-          s = open(p, encoding='utf8').read()
-
-          perms = [
-              ('android.permission.INTERNET', ''),
-              ('android.permission.POST_NOTIFICATIONS', ''),
-              ('android.permission.READ_MEDIA_IMAGES', ''),
-              ('android.permission.READ_MEDIA_VIDEO', ''),
-              ('android.permission.READ_MEDIA_AUDIO', ''),
-              ('android.permission.READ_EXTERNAL_STORAGE', ' android:maxSdkVersion="32"'),
-              ('android.permission.WRITE_EXTERNAL_STORAGE', ' android:maxSdkVersion="28"'),
-              ('android.permission.FOREGROUND_SERVICE', ''),
-              ('android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK', ''),
-              ('android.permission.WAKE_LOCK', ''),
-              ('android.permission.RECORD_AUDIO', ''),
-              ('android.permission.CAMERA', ''),
-              ('android.permission.MODIFY_AUDIO_SETTINGS', ''),
-          ]
-          perm_xml = ''.join('    <uses-permission android:name="%s"%s/>\n' % (n, e) for n, e in perms)
-          s = s.replace('<application', perm_xml + '    <application android:usesCleartextTraffic="true"', 1)
-          s = re.sub(r'android:label="[^"]*"', 'android:label="Chat"', s, count=1)
-
-          extra = """
-              <meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="false"/>
-              <service android:name="com.ryanheise.audioservice.AudioService"
-                  android:foregroundServiceType="mediaPlayback"
-                  android:exported="true">
-                  <intent-filter>
-                      <action android:name="android.media.browse.MediaBrowserService"/>
-                  </intent-filter>
-              </service>
-              <receiver android:name="com.ryanheise.audioservice.MediaButtonReceiver"
-                  android:exported="true">
-                  <intent-filter>
-                      <action android:name="android.intent.action.MEDIA_BUTTON"/>
-                  </intent-filter>
-              </receiver>
-          """
-          s = s.replace('</application>', extra + '</application>', 1)
-          open(p, 'w', encoding='utf8').write(s)
-
-          # ---- MainActivity باید از AudioServiceActivity ارث ببره (برای just_audio_background) ----
-          files = glob.glob('android/app/src/main/**/MainActivity.*', recursive=True)
-          if not files:
-              sys.exit('MainActivity not found')
-          for f in files:
-              if not f.endswith('.kt'):
-                  sys.exit('Unexpected MainActivity type: ' + f)
-              pkg = re.search(r'package\s+([\w.]+)', open(f, encoding='utf8').read()).group(1)
-              open(f, 'w', encoding='utf8').write(
-                  'package %s\n\nimport com.ryanheise.audioservice.AudioServiceActivity\n\nclass MainActivity : AudioServiceActivity()\n' % pkg)
+          python3 - << 'PY'
+          import re, glob
+          m = "src/main/AndroidManifest.xml"
+          s = open(m, encoding="utf-8").read()
+          perms = ["INTERNET","POST_NOTIFICATIONS","READ_MEDIA_IMAGES","READ_MEDIA_VIDEO",
+                   "READ_MEDIA_AUDIO","READ_EXTERNAL_STORAGE","WRITE_EXTERNAL_STORAGE",
+                   "RECORD_AUDIO","CAMERA","WAKE_LOCK","FOREGROUND_SERVICE",
+                   "FOREGROUND_SERVICE_MEDIA_PLAYBACK"]
+          add = "".join(f'    <uses-permission android:name="android.permission.{p}"/>\n' for p in perms)
+          s = s.replace("<application", add + "    <application", 1)
+          s = s.replace('android:label="chat_app"', 'android:usesCleartextTraffic="true" android:label="Chat"', 1)
+          open(m, "w", encoding="utf-8").write(s)
+          for g in glob.glob("build.gradle*"):
+              t = open(g).read()
+              t = re.sub(r"minSdk(Version)?\s*=?\s*flutter\.minSdkVersion", "minSdk = 24", t)
+              open(g, "w").write(t)
           PY
-          echo "---- AndroidManifest ----"
-          cat android/app/src/main/AndroidManifest.xml
 
-      - name: Raise minSdk to 24 (needed by the audio recorder plugin)
-        working-directory: app
+      - name: Setup signing
+        env:
+          STORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        working-directory: src/app/android
         run: |
-          python3 - <<'PY'
-          import glob, re
-          done = False
-          for f in glob.glob('android/app/build.gradle*'):
-              s = open(f, encoding='utf8').read()
-              if f.endswith('.kts'):
-                  n = re.sub(r'minSdk\s*=\s*flutter\.minSdkVersion', 'minSdk = maxOf(24, flutter.minSdkVersion)', s)
-              else:
-                  n = re.sub(r'minSdkVersion\s+flutter\.minSdkVersion', 'minSdkVersion Math.max(24, flutter.minSdkVersion)', s)
-              if n != s:
-                  open(f, 'w', encoding='utf8').write(n)
-                  done = True
-                  print('patched', f)
-          if not done:
-              print('WARNING: minSdk line not found; check android/app/build.gradle')
-          PY
-          grep -n "minSdk" android/app/build.gradle* || true
-
-      - name: Force compileSdk 36 for old plugins
-        run: |
-          # پلاگین‌های قدیمی (file_picker, device_info_plus, ...) با SDK 34 کامپایل شدن
-          # ولی flutter_plugin_android_lifecycle حداقل 36 میخواد؛ برای همه‌ی ماژول‌ها 36 میذاریم.
-          mkdir -p "$HOME/.gradle/init.d"
-          cat > "$HOME/.gradle/init.d/force-compile-sdk.gradle" <<'GRADLE'
-          gradle.beforeProject { p ->
-              p.afterEvaluate {
-                  if (p.name != 'app' && p.hasProperty('android')) {
-                      p.android.compileSdk = 36
+          if [ -f ../../release.p12 ] && [ -n "$STORE_PASS" ]; then
+            cp ../../release.p12 app/release.p12
+            printf "storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\n" "$STORE_PASS" "$STORE_PASS" "$KEY_ALIAS" > key.properties
+            python3 - << 'PY'
+          import glob
+          g = glob.glob("app/build.gradle.kts")
+          if g:
+              p = g[0]; t = open(p).read()
+              t = 'import java.util.Properties\n' + t
+              t = t.replace("android {", '''val ksProps = Properties().apply { load(rootProject.file("key.properties").inputStream()) }
+          android {
+              signingConfigs {
+                  create("release") {
+                      storeFile = file("release.p12")
+                      storeType = "pkcs12"
+                      storePassword = ksProps["storePassword"] as String
+                      keyAlias = ksProps["keyAlias"] as String
+                      keyPassword = ksProps["keyPassword"] as String
                   }
-              }
-          }
-          GRADLE
-          cat "$HOME/.gradle/init.d/force-compile-sdk.gradle"
+              }''', 1)
+              t = t.replace('signingConfig = signingConfigs.getByName("debug")', 'signingConfig = signingConfigs.getByName("release")')
+              open(p, "w").write(t)
+          else:
+              p = "app/build.gradle"; t = open(p).read()
+              t = t.replace("android {", '''def ksProps = new Properties()
+          ksProps.load(new FileInputStream(rootProject.file("key.properties")))
+          android {
+              signingConfigs {
+                  release {
+                      storeFile file("release.p12")
+                      storeType "pkcs12"
+                      storePassword ksProps["storePassword"]
+                      keyAlias ksProps["keyAlias"]
+                      keyPassword ksProps["keyPassword"]
+                  }
+              }''', 1)
+              t = t.replace("signingConfigs.debug", "signingConfigs.release")
+              open(p, "w").write(t)
+          PY
+          else
+            echo "::warning::release.p12 یا KEYSTORE_PASSWORD نیست؛ با کلید debug امضا میشه"
+          fi
 
-      - name: Pre-install CMake (the jni plugin needs it; Gradle's auto-download is flaky)
-        run: |
-          SDKM=$(ls $ANDROID_HOME/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort -V | tail -1)
-          [ -z "$SDKM" ] && SDKM=$(which sdkmanager)
-          for i in 1 2 3 4; do
-            rm -rf "$ANDROID_HOME/cmake/3.22.1" "$ANDROID_HOME/.temp" 2>/dev/null || true
-            yes | "$SDKM" --licenses > /dev/null 2>&1 || true
-            if "$SDKM" --install "cmake;3.22.1" && [ -x "$ANDROID_HOME/cmake/3.22.1/bin/cmake" ]; then
-              echo "CMake installed"; break
-            fi
-            echo "attempt $i failed, retrying in 15s..."; sleep 15
-          done
-          ls "$ANDROID_HOME/cmake" || { echo "ERROR: CMake install failed"; exit 1; }
-
-      - name: Build release APK
-        working-directory: app
+      - name: Build APK
+        working-directory: src/app
         run: |
           flutter pub get
-          # اگه پکیجی از pubspec.yaml روی ریپو جا مونده باشه همین‌جا با پیام روشن fail میشه
-          for pkg in record camera android_intent_plus; do
-            grep -q "\"name\": \"$pkg\"" .dart_tool/package_config.json || { echo "ERROR: package '$pkg' is not in app/pubspec.yaml on the repo. Push the latest pubspec.yaml."; exit 1; }
-          done
-          flutter build apk --release --no-shrink --build-number=${{ github.run_number }}
-
-      - name: Sign with fixed key
-        env:
-          KS_PASS: chatapp-sign-2026
-        run: |
-          OUT=app/build/app/outputs/flutter-apk
-          if [ ! -f release.p12 ]; then
-            echo "ERROR: release.p12 not found in the repo root. Without it every build gets a different signature and the APK cannot update over the old one."
-            exit 1
-          fi
-          APKSIGNER=$(ls $ANDROID_HOME/build-tools/*/apksigner | sort -V | tail -1)
-          "$APKSIGNER" sign --ks release.p12 --ks-pass env:KS_PASS --key-pass env:KS_PASS --ks-key-alias chat --out $OUT/chat.apk $OUT/app-release.apk
-          "$APKSIGNER" verify --print-certs $OUT/chat.apk
+          flutter build apk --release
 
       - uses: actions/upload-artifact@v4
         with:
           name: chat-apk
-          path: app/build/app/outputs/flutter-apk/chat.apk
+          path: src/app/build/app/outputs/flutter-apk/app-release.apk
