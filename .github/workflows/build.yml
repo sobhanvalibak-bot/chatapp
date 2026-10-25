@@ -3,7 +3,7 @@ name: Build Android APK
 on:
   push:
     branches: [main]
-    paths: ["chatapp.zip", ".github/workflows/build.yml"]
+    paths: ["src.zip", ".github/workflows/build.yml"]
   workflow_dispatch:
 
 jobs:
@@ -14,8 +14,8 @@ jobs:
 
       - name: Unzip project
         run: |
-          unzip -q chatapp.zip -d src
-          # اگه زیپ یه پوشه‌ی بیرونی داشت (مثلا chatapp/)، همونو پیدا کن
+          unzip -q src.zip -d src
+          # اگه زیپ یه پوشه‌ی بیرونی داشت (مثلا src/)، همونو پیدا کن
           if [ ! -d src/app ]; then
             d=$(dirname "$(find src -maxdepth 3 -type d -name app | head -1)")
             mv "$d" src_fixed && rm -rf src && mv src_fixed src
@@ -56,6 +56,40 @@ jobs:
               t = re.sub(r"minSdk(Version)?\s*=?\s*flutter\.minSdkVersion", "minSdk = 24", t)
               open(g, "w").write(t)
           PY
+
+      - name: Force compileSdk 36 for all plugins
+        working-directory: src/app/android
+        run: |
+          python3 - << 'PY'
+          import os
+          kts = "build.gradle.kts"
+          grv = "build.gradle"
+          if os.path.exists(kts):
+              block = """subprojects {
+              afterEvaluate {
+                  extensions.findByName("android")?.withGroovyBuilder {
+                      "compileSdkVersion"(36)
+                  }
+              }
+          }
+
+          """
+              t = open(kts, encoding="utf-8").read()
+              open(kts, "w", encoding="utf-8").write(block + t)
+          else:
+              block = """subprojects {
+              afterEvaluate { p ->
+                  if (p.hasProperty('android')) {
+                      p.android.compileSdkVersion 36
+                  }
+              }
+          }
+
+          """
+              t = open(grv, encoding="utf-8").read()
+              open(grv, "w", encoding="utf-8").write(block + t)
+          PY
+          head -12 build.gradle*
 
       - name: Setup signing
         env:
